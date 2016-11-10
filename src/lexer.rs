@@ -5,6 +5,8 @@ use std::str;
 ///  Token
 pub enum TokenType {
     Integer,
+    LParen,
+    RParen,
     Plus,
     Minus,
     Mul,
@@ -83,6 +85,14 @@ impl<Tit> iter::Iterator for TokenIterator<Tit>
                                 .collect();
                             return Some(Token::new(TokenType::Integer,
                                                    Some(num.parse::<f64>().unwrap())));
+                        }
+                        '(' => {
+                            self.text_iter.next();
+                            return Some(Token::new(TokenType::LParen, None));
+                        }
+                        ')' => {
+                            self.text_iter.next();
+                            return Some(Token::new(TokenType::RParen, None));
                         }
                         '+' => {
                             self.text_iter.next();

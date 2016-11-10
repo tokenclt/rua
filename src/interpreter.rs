@@ -1,88 +1,36 @@
 use lexer::{Tokenizer, TokenType, Token, TokenIterator};
-use std::iter;
+use parser;
 
-pub struct Interpreter<'a, TRaw>
-    where TRaw: Tokenizer<'a>
-{
-    /// peekable tokenizer
-    token_iter: iter::Peekable<TokenIterator<TRaw::Iter>>,
+pub enum InterpretError {
+    Error,
 }
 
-#[derive(Debug)]
-pub enum InterpreterError {
-    SyntaxError,
+pub trait Visitor<T> {
+    fn visit_expr(&mut self, e: &parser::Expr) ->T;
 }
 
-impl<'a, TRaw> Interpreter<'a, TRaw>
-    where TRaw: Tokenizer<'a>
-{
-    /// compare the current token with the passed token
-    /// if they match, advance tokenizer
-    /// otherwise raise an error
-    fn eat(&mut self, token_type: TokenType) -> Result<(), InterpreterError> {
-        if let Some(&token) = self.token_iter.peek() {
-            if token.token_type == token_type {
-                self.token_iter.next();
-                return Ok(());
+pub struct Interpreter{
+}
+
+impl Interpreter {
+    pub fn interpret(&mut self, e: &parser::Expr) -> f64 {
+        self.visit_expr(e)
+    }
+}
+
+impl Visitor<f64> for Interpreter {
+    fn visit_expr(&mut self, e: &parser::Expr) -> f64 {
+        match *e{
+            parser::Expr::Num(v) => v,
+            parser::Expr::BinOp(t, ref left, ref right) => {
+                match t{
+                    TokenType::Plus => self.visit_expr(left) + self.visit_expr(right),
+                    TokenType::Minus => self.visit_expr(left) - self.visit_expr(right),
+                    TokenType::Mul => self.visit_expr(left) * self.visit_expr(right),
+                    TokenType::Div => self.visit_expr(left) / self.visit_expr(right),
+                    _ => panic!("Unexpected token type"),
+                }
             }
         }
-        Err(InterpreterError::SyntaxError)
-    }
-
-    /// rule: factor: Integer
-    fn factor(&mut self) -> Result<f64, InterpreterError> {
-        if let Some(&token) = self.token_iter.peek() {
-            try!(self.eat(TokenType::Integer));
-            Ok(token.token_value.unwrap())
-        } else {
-            Err(InterpreterError::SyntaxError) // e.g. ended early
-        }
-
-    }
-
-    /// rule: term : factor((Mul | Div) factor)*
-    fn term(&mut self) -> Result<f64, InterpreterError> {
-        let mut result = try!(self.factor());
-        while let Some(&Token { token_type, .. }) = self.token_iter.peek() {
-            match token_type {
-                TokenType::Mul => {
-                    self.eat(TokenType::Mul); // must succeed
-                    result = result * try!(self.factor());
-                }
-                TokenType::Div => {
-                    self.eat(TokenType::Div); // must secceed
-                    result = result / try!(self.factor());
-                }
-                _ => break, 
-            }
-        }
-        Ok(result)
-    }
-
-    /// rule: expr : term((Plus | Minus) term)*
-    pub fn expr(&mut self) -> Result<f64, InterpreterError> {
-        let mut result = try!(self.term());
-        while let Some(&Token { token_type, .. }) = self.token_iter.peek() {
-            match token_type {
-                TokenType::Plus => {
-                    self.eat(TokenType::Plus);
-                    result = result + try!(self.term());
-                }
-                TokenType::Minus => {
-                    self.eat(TokenType::Minus);
-                    result = result - try!(self.term());
-                }
-                _ => break,
-            };
-        }
-        Ok(result)
-    }
-
-    pub fn new(text: &'a TRaw) -> Interpreter<'a, TRaw> {
-        Interpreter { token_iter: text.tokenize().peekable() }
-    }
-
-    fn error() {
-        panic!("Unexpected token");
     }
 }
