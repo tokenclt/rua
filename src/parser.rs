@@ -4,6 +4,7 @@ use std::iter;
 pub enum Expr {
     Num(f64),
     BinOp(TokenType, Box<Expr>, Box<Expr>),
+    UnaryOp(TokenType, Box<Expr>),
 }
 
 #[derive(Debug)]
@@ -42,10 +43,15 @@ impl<'a, TRaw> Parser<'a, TRaw>
         Err(ParserError::SyntaxError)
     }
 
-    /// rule: factor: Integer | LParen expr RParen
+    /// rule: factor: (Plus | Minus) factor | Integer | LParen expr RParen
     fn factor(&mut self) -> Result<Box<Expr>, ParserError> {
         if let Some(&Token { token_type, token_value }) = self.token_iter.peek() {
             match token_type {
+                TokenType::Plus | TokenType::Minus => {
+                    self.eat(token_type); // must succeed
+                    let node = try!(self.factor());
+                    Ok(Box::new(Expr::UnaryOp(token_type,node)))
+                }
                 TokenType::Integer => {
                     self.eat(TokenType::Integer);
                     Ok(Box::new(Expr::Num(token_value.unwrap())))
