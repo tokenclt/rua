@@ -6,10 +6,10 @@ pub struct RpnConverter{
 }
 
 impl Visitor<()> for RpnConverter {
-    fn visit_expr(&mut self, e: &parser::Expr) {
+    fn visit_expr(&mut self, e: &parser::Node) {
         match *e{
-            parser::Expr::Num(v) => print!("{0} ", v),
-            parser::Expr::BinOp(t, ref left, ref right) =>{
+            parser::Node::Num(v) => print!("{0} ", v),
+            parser::Node::BinOp(t, ref left, ref right) =>{
                 match t{
                     TokenType::Plus => {
                         self.visit_expr(left);

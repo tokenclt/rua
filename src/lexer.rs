@@ -1,5 +1,6 @@
 use std::iter;
 use std::str;
+use std::collections;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 ///  Token
@@ -12,21 +13,17 @@ pub enum TokenType {
     Mul,
     Div,
     EOF,
+    Semi, // ';'
+    Assign, // '='
+    Comma, // ','
+    Name, // keyworks and variable identifier
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct Token {
-    pub token_type: TokenType,
-    pub token_value: Option<f64>,
-}
-
-impl Token {
-    fn new(tp: TokenType, val: Option<f64>) -> Token {
-        Token {
-            token_type: tp,
-            token_value: val,
-        }
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    Flag(TokenType),
+    Num(f64),
+    Name(String),
 }
 
 pub struct TokenIterator<Tit>
@@ -36,6 +33,7 @@ pub struct TokenIterator<Tit>
     /// used as an iterator
     text_iter: iter::Peekable<Tit>,
     is_ended: bool,
+    keyword_table: collections::HashMap<String, TokenType>,
 }
 
 impl<Tit> TokenIterator<Tit>
@@ -45,6 +43,7 @@ impl<Tit> TokenIterator<Tit>
         TokenIterator {
             text_iter: it.peekable(),
             is_ended: false,
+            keyword_table: collections::HashMap::new(),
         }
     }
 
@@ -52,15 +51,20 @@ impl<Tit> TokenIterator<Tit>
         where F: Fn(char) -> bool
     {
         let mut v: Vec<char> = vec![];
-        while let Some(&ch) = self.text_iter.peek() {
-            if predicate(ch) {
-                self.text_iter.next();
-                v.push(ch);
-            } else {
-                break;
-            }
+        while let Some((true, c)) = self.text_iter.peek().map(|&c| (predicate(c), c)) {
+            self.text_iter.next();
+            v.push(c);
         }
         v
+    }
+
+    /// find id in text, return Name or reserved keywords
+    fn handle_identifier(&mut self) -> Token {
+        let id: String = self.consume_while(|c| c.is_alphabetic() || c == '_')
+            .into_iter()
+            .collect();
+        // TODO add keyword table
+        Token::Name(id)
     }
 }
 
@@ -83,36 +87,50 @@ impl<Tit> iter::Iterator for TokenIterator<Tit>
                             let num: String = self.consume_while(|c| c.is_numeric() || c == '.')
                                 .into_iter()
                                 .collect();
-                            return Some(Token::new(TokenType::Integer,
-                                                   Some(num.parse::<f64>().unwrap())));
+                            return Some(Token::Num(num.parse::<f64>().unwrap()));
                         }
                         '(' => {
                             self.text_iter.next();
-                            return Some(Token::new(TokenType::LParen, None));
+                            return Some(Token::Flag(TokenType::LParen));
                         }
                         ')' => {
                             self.text_iter.next();
-                            return Some(Token::new(TokenType::RParen, None));
+                            return Some(Token::Flag(TokenType::RParen));
                         }
                         '+' => {
                             self.text_iter.next();
-                            return Some(Token::new(TokenType::Plus, None));
+                            return Some(Token::Flag(TokenType::Plus));
                         }
                         '-' => {
                             self.text_iter.next();
-                            return Some(Token::new(TokenType::Minus, None));
+                            return Some(Token::Flag(TokenType::Minus));
                         }
                         '*' => {
                             self.text_iter.next();
-                            return Some(Token::new(TokenType::Mul, None));
+                            return Some(Token::Flag(TokenType::Mul));
                         }
                         '/' => {
                             self.text_iter.next();
-                            return Some(Token::new(TokenType::Div, None));
+                            return Some(Token::Flag(TokenType::Div));
                         }
                         ' ' => {
                             self.text_iter.next();
                             continue;
+                        }
+                        ';' => {
+                            self.text_iter.next();
+                            return Some(Token::Flag(TokenType::Semi));
+                        }
+                        '=' => {
+                            self.text_iter.next();
+                            return Some(Token::Flag(TokenType::Assign));
+                        }
+                        ',' => {
+                            self.text_iter.next();
+                            return Some(Token::Flag(TokenType::Comma));
+                        }
+                        c if c.is_alphabetic() || c == '_' => {
+                            return Some(self.handle_identifier());
                         }
                         _ => {
                             self.text_iter.next();
@@ -122,7 +140,7 @@ impl<Tit> iter::Iterator for TokenIterator<Tit>
                 } 
                 None => {
                     self.is_ended = true; // EOF should only return for once
-                    return Some(Token::new(TokenType::EOF, None));
+                    return Some(Token::Flag(TokenType::EOF));
                 }
             }
         }
@@ -142,4 +160,38 @@ impl<'a> Tokenizer<'a> for String {
     fn tokenize(&'a self) -> TokenIterator<Self::Iter> {
         TokenIterator::new(self.chars())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use lexer::*;
+
+    #[test]
+    fn expression_tokenize() {
+        let text = "2 * 3 - 2 * ( 3 / 22 + 1 - - 2.22)".to_string();
+        let mut token_it = text.tokenize();
+        assert_eq!(token_it.next(), Some(Token::Num(2f64)));
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::Mul)));
+        assert_eq!(token_it.next(), Some(Token::Num(3f64)));
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::Minus)));
+        assert_eq!(token_it.next(), Some(Token::Num(2f64)));
+
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::Mul)));
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::LParen)));
+        assert_eq!(token_it.next(), Some(Token::Num(3f64)));
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::Div)));
+        assert_eq!(token_it.next(), Some(Token::Num(22f64)));
+
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::Plus)));
+        assert_eq!(token_it.next(), Some(Token::Num(1f64)));
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::Minus)));
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::Minus)));
+        assert_eq!(token_it.next(), Some(Token::Num(2.22f64)));
+
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::RParen)));
+        assert_eq!(token_it.next(), Some(Token::Flag(TokenType::EOF)));
+        assert_eq!(token_it.next(), None);
+
+    }
+
 }
