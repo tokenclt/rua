@@ -1,4 +1,4 @@
-use lexer::{Tokenizer, TokenType, Token, TokenIterator};
+use lexer::tokens::{Token, FlagType};
 use parser::{Node, Expr, Var, Stat};
 use std::collections::HashMap;
 
@@ -17,9 +17,11 @@ impl Interpreter {
     pub fn new() -> Interpreter {
         Interpreter { symbol_table: HashMap::new() }
     }
-    pub fn interpret(&mut self, n: &Node) {
-        self.visit_block(n);
+
+    pub fn interpret(&mut self, n: &Node) -> Result<(), InterpretError> {
+        self.visit_block(n)
     }
+
     pub fn print_symble_table(&self) {
         println!("{0:?}", self.symbol_table);
     }
@@ -32,29 +34,25 @@ impl Interpreter {
             Expr::Num(v) => Ok(v),
             Expr::BinOp(t, ref left, ref right) => {
                 match t {
-                    TokenType::Plus => {
+                    FlagType::Plus => {
                         Ok(try!(self.visit_expr(left)) + try!(self.visit_expr(right)))
                     }
 
-                    TokenType::Minus => {
+                    FlagType::Minus => {
                         Ok(try!(self.visit_expr(left)) - try!(self.visit_expr(right)))
                     }
 
-                    TokenType::Mul => {
-                        Ok(try!(self.visit_expr(left)) * try!(self.visit_expr(right)))
-                    }
+                    FlagType::Mul => Ok(try!(self.visit_expr(left)) * try!(self.visit_expr(right))),
 
-                    TokenType::Div => {
-                        Ok(try!(self.visit_expr(left)) / try!(self.visit_expr(right)))
-                    }
+                    FlagType::Div => Ok(try!(self.visit_expr(left)) / try!(self.visit_expr(right))),
 
                     _ => Err(InterpretError::Error),
                 }
             }
             Expr::UnaryOp(t, ref child) => {
                 match t {
-                    TokenType::Minus => Ok(-try!(self.visit_expr(child))),
-                    TokenType::Plus => Ok(try!(self.visit_expr(child))),
+                    FlagType::Minus => Ok(-try!(self.visit_expr(child))),
+                    FlagType::Plus => Ok(try!(self.visit_expr(child))),
                     _ => Err(InterpretError::Error),
                 }
             }
@@ -101,23 +99,26 @@ impl Interpreter {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use interpreter::Interpreter;
     use parser::Parser;
+    use lexer::Lexer;
 
     #[test]
-    fn test() {
+    pub fn test() {
         let text = String::from("\
+    --This a comment 
     a, number = 0, 1
-    b = number * 10 - 2*(3+4)
-    a = a + b
+    _b = number * 10 - 2*(3+4)
+    a = a + _b
 
     ");
-        let mut ast = Parser::new(&text);
+        let lexer = Lexer::new();
         let mut itpt = Interpreter::new();
-        itpt.interpret(&ast.parse().unwrap());
+        let out = itpt.interpret(&Parser::parse(lexer.tokenize(text.chars())).unwrap());
+        out.unwrap();
         assert_eq!(itpt.symbol_table.get("a"), Some(&-4f64));
-        assert_eq!(itpt.symbol_table.get("b"), Some(&-4f64));
+        assert_eq!(itpt.symbol_table.get("_b"), Some(&-4f64));
         assert_eq!(itpt.symbol_table.get("number"), Some(&1f64));
     }
 }
