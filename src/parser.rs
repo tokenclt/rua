@@ -1,21 +1,29 @@
 use lexer::tokens::{Token, FlagType};
 use lexer::{Lexer, TokenIterator};
 use std::iter;
+use std::ops::DerefMut;
 
 pub enum Expr {
     Num(f64),
+    Boole(bool),
     Var(Var),
+    Str(String),
     BinOp(FlagType, Box<Expr>, Box<Expr>),
     UnaryOp(FlagType, Box<Expr>),
 }
 
+type Name = String;
+
 pub enum Var {
-    Name(String),
+    Name(Name),
 }
 
 pub enum Stat {
     Empty,
     Assign(Vec<Var>, Vec<Box<Expr>>),
+    IfElse(Box<Expr>, Box<Node>, Option<Box<Node>>),
+    While(Box<Expr>, Box<Node>),
+    ForRange(Vec<Name>, Vec<Box<Expr>>, Box<Node>),
 }
 
 pub enum Node {
@@ -26,6 +34,8 @@ pub enum Node {
 #[derive(Debug)]
 pub enum ParserError {
     SyntaxError,
+    ExpectationUnmeet,
+    ParseFailed,
 }
 
 pub struct Parser<'a, Tit>
@@ -36,6 +46,7 @@ pub struct Parser<'a, Tit>
 }
 
 /// Common method
+#[allow(dead_code)]
 impl<'a, Tit> Parser<'a, Tit>
     where Tit: iter::Iterator<Item = char> + Clone
 {
@@ -45,11 +56,9 @@ impl<'a, Tit> Parser<'a, Tit>
     }
 
     pub fn peek_clone(&mut self) -> Option<Token> {
-        self.token_iter.peek().map(|t| {
-            println!("{:?}", t);
-            t.clone()
-        })
+        self.token_iter.peek().map(|t| t.clone())
     }
+
 
     /// compare the current token with the passed token
     /// if they match, advance tokenizer
@@ -67,12 +76,13 @@ impl<'a, Tit> Parser<'a, Tit>
             self.token_iter.next();
             Ok(())
         } else {
-            Err(ParserError::SyntaxError)
+            Err(ParserError::ExpectationUnmeet)
         }
     }
 }
 
 /// Expression parser
+#[allow(dead_code)]
 impl<'a, Tit> Parser<'a, Tit>
     where Tit: iter::Iterator<Item = char> + Clone
 {
@@ -81,23 +91,35 @@ impl<'a, Tit> Parser<'a, Tit>
         if let Some(token) = self.peek_clone() {
             match token {
                 Token::Num(n) => {
-                    self.eat(FlagType::Integer);
+                    self.eat(FlagType::Integer).unwrap();
                     Ok(Box::new(Expr::Num(n)))
                 }
                 Token::Flag(t) if t == FlagType::Plus || t == FlagType::Minus => {
-                    self.eat(t);
+                    self.eat(t).unwrap();
                     let node = try!(self.factor());
                     Ok(Box::new(Expr::UnaryOp(t, node)))
                 }
                 Token::Flag(FlagType::LParen) => {
-                    self.eat(FlagType::LParen);
+                    self.eat(FlagType::LParen).unwrap();
                     let node = try!(self.expr());
                     try!(self.eat(FlagType::RParen));
                     Ok(node)
                 }
                 Token::Name(id) => {
-                    self.eat(FlagType::Name);
+                    self.eat(FlagType::Name).unwrap();
                     Ok(Box::new(Expr::Var(Var::Name(id))))
+                }
+                Token::Str(s) => {
+                    self.eat(FlagType::Str).unwrap();
+                    Ok(Box::new(Expr::Str(s)))
+                }
+                Token::Flag(FlagType::True)=>{
+                    self.eat(FlagType::True).unwrap();
+                    Ok(Box::new(Expr::Boole(true)))
+                }
+                Token::Flag(FlagType::False)=>{
+                    self.eat(FlagType::False);
+                    Ok(Box::new(Expr::Boole(false)))
                 }
                 _ => Err(ParserError::SyntaxError),
             }
@@ -110,14 +132,14 @@ impl<'a, Tit> Parser<'a, Tit>
     /// rule: term : factor((Mul | Div) factor)*
     fn term(&mut self) -> Result<Box<Expr>, ParserError> {
         let mut node = try!(self.factor());
-        while let Some(token) = self.token_iter.peek().map(|t| t.clone()) {
+        while let Some(token) = self.peek_clone() {
             match token {
                 Token::Flag(FlagType::Mul) => {
-                    self.eat(FlagType::Mul); // must succeed
+                    self.eat(FlagType::Mul).unwrap(); // must succeed
                     node = Box::new(Expr::BinOp(FlagType::Mul, node, try!(self.factor())));
                 }
                 Token::Flag(FlagType::Div) => {
-                    self.eat(FlagType::Div); // must secceed
+                    self.eat(FlagType::Div).unwrap(); // must secceed
                     node = Box::new(Expr::BinOp(FlagType::Div, node, try!(self.factor())));
                 }
                 _ => break, 
@@ -126,23 +148,62 @@ impl<'a, Tit> Parser<'a, Tit>
         Ok(node)
     }
 
-    /// rule: expr : term((Plus | Minus) term)*
-    fn expr(&mut self) -> Result<Box<Expr>, ParserError> {
+    /// rule: LogicalTerm: term {(Plus | Minus) term}
+    fn logical_term(&mut self) -> Result<Box<Expr>, ParserError> {
         let mut node = try!(self.term());
-        while let Some(token) = self.token_iter.peek().map(|t| t.clone()) {
+        while let Some(token) = self.peek_clone() {
             match token {
                 Token::Flag(FlagType::Plus) => {
-                    self.eat(FlagType::Plus);
+                    self.eat(FlagType::Plus).unwrap();
                     node = Box::new(Expr::BinOp(FlagType::Plus, node, try!(self.term())));
                 }
                 Token::Flag(FlagType::Minus) => {
-                    self.eat(FlagType::Minus);
+                    self.eat(FlagType::Minus).unwrap();
                     node = Box::new(Expr::BinOp(FlagType::Minus, node, try!(self.term())));
                 }
                 _ => break,
             };
         }
         Ok(node)
+    }
+
+    /// rule: cmp: Disj [ ( EQ | NEQ ) Disj] 
+    fn cmp(&mut self) -> Result<Box<Expr>, ParserError> {
+        let mut node = try!(self.logical_term());
+        if let Some(Token::Flag(flag)) = self.peek_clone() {
+            match flag {
+                FlagType::EQ | FlagType::NEQ => {
+                    self.eat(flag).unwrap();
+                    node = Box::new(Expr::BinOp(flag, node, try!(self.logical_term())));
+                },
+                _ => {}
+            }
+        } 
+        Ok(node)
+    }
+
+    ///rule: conj : LogicalTerm AND LogicalTerm
+    fn conj(&mut self) -> Result<Box<Expr>, ParserError> {
+        let mut node = try!(self.cmp());
+        while let Some(Token::Flag(FlagType::AND)) = self.peek_clone(){
+            self.eat(FlagType::AND).unwrap();
+            node = Box::new(Expr::BinOp(FlagType::AND, node, try!(self.cmp())));
+        }
+        Ok(node)
+    }
+
+    /// rule: disj: Conj OR Conj 
+    fn disj(&mut self) -> Result<Box<Expr>, ParserError> {
+        let mut node = try!(self.conj());
+        while let Some(Token::Flag(FlagType::OR)) = self.peek_clone() {
+            self.eat(FlagType::OR).unwrap();
+            node = Box::new(Expr::BinOp(FlagType::OR, node, try!(self.conj())));
+        }
+        Ok(node)
+    }
+
+    fn expr(&mut self) -> Result<Box<Expr>, ParserError>{
+        self.disj()
     }
 
     fn error() {
@@ -172,27 +233,38 @@ impl<'a, Tit> Parser<'a, Tit>
 
     /// rule: Stat: Colons | (Varlist Assign ExprList)
     fn stat(&mut self) -> Result<Box<Stat>, ParserError> {
-        if let Some(Token::Flag(FlagType::Colons)) = self.peek_clone() {
-            Ok(Box::new(Stat::Empty))
-        } else {
-            let mut varlist = try!(self.varlist());
-            self.eat(FlagType::Assign);
-            let mut exprlist = try!(self.exprlist());
-            if varlist.len() == exprlist.len() {
-                Ok(Box::new(Stat::Assign(varlist, exprlist)))
-            } else {
-                Err(ParserError::SyntaxError)
+        if let Some(token) = self.peek_clone() {
+            match token {
+                Token::Flag(flag) if flag == FlagType::Colons || flag == FlagType::EOF => {
+                    self.eat(flag).unwrap();
+                    Ok(Box::new(Stat::Empty))
+                }
+                Token::Name(_) => {
+                    let it_backup = self.token_iter.clone();
+                    let mut varlist = try!(self.varlist());
+                    if let Ok(_) = self.eat(FlagType::Assign) {
+                        let mut exprlist = try!(self.exprlist());
+                        Ok(Box::new(Stat::Assign(varlist, exprlist)))
+                    } else {
+                        //  roll back
+                        self.token_iter = it_backup;
+                        // and try parse function call
+                        unimplemented!()
+                    }
+                }
+                Token::Flag(FlagType::If) => self.if_else_clause(),
+                _ => Err(ParserError::SyntaxError),
             }
+        } else {
+            Err(ParserError::SyntaxError)
         }
     }
 
     /// rule: var: Name | PrefixExpr |
     fn var(&mut self) -> Result<Var, ParserError> {
-        if let Some(Token::Name(id)) = self.peek_clone() {
-            self.eat(FlagType::Name);
-            Ok(Var::Name(id))
-        } else {
-            Err(ParserError::SyntaxError)
+        match self.peek_clone() {
+            Some(Token::Name(_)) => self.name().map(|id| Var::Name(id)),
+            _ => unimplemented!(),
         }
     }
     /// rule: varlist Name { Comma Name}
@@ -202,9 +274,32 @@ impl<'a, Tit> Parser<'a, Tit>
         while let Some(token) = self.peek_clone() {
             match token {
                 Token::Flag(FlagType::Comma) => {
-                    self.eat(FlagType::Comma);
+                    self.eat(FlagType::Comma).unwrap();
                     var = try!(self.var());
                     list.push(var);
+                }
+                _ => break,
+            }
+        }
+        Ok(list)
+    }
+
+    fn name(&mut self) -> Result<Name, ParserError> {
+        if let Some(Token::Name(id)) = self.peek_clone() {
+            self.eat(FlagType::Name).unwrap();
+            Ok(id)
+        } else {
+            Err(ParserError::SyntaxError)
+        }
+    }
+
+    fn namelist(&mut self) -> Result<Vec<Name>, ParserError> {
+        let mut list = vec![try!(self.name())];
+        while let Some(token) = self.peek_clone() {
+            match token {
+                Token::Flag(FlagType::Comma) => {
+                    self.eat(FlagType::Comma).unwrap();
+                    list.push(try!(self.name()));
                 }
                 _ => break,
             }
@@ -219,7 +314,7 @@ impl<'a, Tit> Parser<'a, Tit>
         while let Some(token) = self.peek_clone() {
             match token {
                 Token::Flag(FlagType::Comma) => {
-                    self.eat(FlagType::Comma);
+                    self.eat(FlagType::Comma).unwrap();
                     expr = try!(self.expr());
                     list.push(expr);
                 }
@@ -227,5 +322,70 @@ impl<'a, Tit> Parser<'a, Tit>
             }
         }
         Ok(list)
+    }
+
+    /// ifelse: if Expr then Block { elseif Expr then Block} [else Block] end
+    fn if_else_clause(&mut self) -> Result<Box<Stat>, ParserError> {
+        try!(self.eat(FlagType::If));
+        let expr = try!(self.expr());
+        try!(self.eat(FlagType::Then));
+        let then_node = try!(self.block());
+        let mut bottom_clause = Box::into_raw(Box::new(Stat::IfElse(expr, then_node, None)));
+        // {elseif exp then exp}
+        unsafe {
+            // bypass borrow checker
+            while let Some(Token::Flag(FlagType::Elseif)) = self.peek_clone() {
+                self.eat(FlagType::Elseif).unwrap();
+                let expr = try!(self.expr());
+                try!(self.eat(FlagType::Then).or(Err(ParserError::SyntaxError)));
+                let then_node = try!(self.block());
+                // create new if-else node and walk down
+                let sub_clause = Box::into_raw(Box::new(Stat::IfElse(expr, then_node, None)));
+                let sub_block = Box::new(Node::Block(vec![Box::from_raw(sub_clause)]));
+
+                if let Stat::IfElse(_, _, ref mut e) = *bottom_clause {
+                    *e = Some(sub_block);
+                } else {
+                    panic!("Should not be refute");
+                }
+                bottom_clause = sub_clause;
+            }
+            // [else block]
+            if let Some(Token::Flag(FlagType::Else)) = self.peek_clone() {
+                self.eat(FlagType::Else).unwrap();
+                let block = try!(self.block());
+                if let Stat::IfElse(_, _, ref mut e) = *bottom_clause {
+                    *e = Some(block);
+                } else {
+                    panic!("Should not be refute");
+                }
+            }
+            if let Err(_) = self.eat(FlagType::End) {
+                Err(ParserError::SyntaxError)
+            } else {
+                Ok(Box::from_raw(bottom_clause))
+            }
+        }
+    }
+
+    /// WhileDo: while Expr do Block end
+    fn while_do(&mut self) -> Result<Box<Stat>, ParserError> {
+        self.eat(FlagType::While).unwrap();
+        let expr = try!(self.expr());
+        try!(self.eat(FlagType::Do).or(Err(ParserError::SyntaxError)));
+        let block = try!(self.block());
+        try!(self.eat(FlagType::End).or(Err(ParserError::SyntaxError)));
+        Ok(Box::new(Stat::While(expr, block)))
+    }
+
+    /// RangedFor: for Namelist in Exprlist do block end
+    fn ranged_for(&mut self) -> Result<Box<Stat>, ParserError> {
+        self.eat(FlagType::For).unwrap();
+        let namelist = try!(self.namelist());
+        try!(self.eat(FlagType::In).or(Err(ParserError::SyntaxError)));
+        let exprlist = try!(self.exprlist());
+        try!(self.eat(FlagType::Do).or(Err(ParserError::SyntaxError)));
+        let block = try!(self.block());
+        Ok(Box::new(Stat::ForRange(namelist, exprlist, block)))
     }
 }

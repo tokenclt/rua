@@ -4,35 +4,37 @@ use std::iter;
 use std::str;
 use std::collections::HashMap;
 use std::clone::Clone;
+use std::cmp::max;
 use self::tokens::*;
 
 #[derive(Debug)]
 pub enum TokenizeError {
-    InvalidSymbol,
+    Invalidoperator,
     InvalidNumber,
     Error,
 }
 
 pub struct Lexer {
     keyword_table: HashMap<String, FlagType>,
-    symbol_table: HashMap<String, FlagType>,
+    operator_table: HashMap<String, FlagType>,
 }
 
 impl Lexer {
     pub fn new() -> Lexer {
         Lexer {
             keyword_table: get_keyword_table(),
-            symbol_table: get_symbol_table(),
+            operator_table: get_operator_table(),
         }
     }
 
     pub fn tokenize<'a, Tit>(&'a self, text_it: Tit) -> TokenIterator<'a, Tit>
         where Tit: iter::Iterator<Item = char> + Clone
     {
-        TokenIterator::new(text_it, &self.keyword_table, &self.symbol_table)
+        TokenIterator::new(text_it, &self.keyword_table, &self.operator_table)
     }
 }
 
+#[derive(Clone)]
 pub struct TokenIterator<'a, Tit>
     where Tit: iter::Iterator<Item = char> + Clone
 {
@@ -41,7 +43,7 @@ pub struct TokenIterator<'a, Tit>
     text_iter: iter::Peekable<Tit>,
     is_ended: bool,
     keywords: &'a HashMap<String, FlagType>,
-    symbols: &'a HashMap<String, FlagType>,
+    operators: &'a HashMap<String, FlagType>,
 }
 
 impl<'a, Tit> TokenIterator<'a, Tit>
@@ -55,7 +57,7 @@ impl<'a, Tit> TokenIterator<'a, Tit>
             text_iter: it.peekable(),
             is_ended: false,
             keywords: kt,
-            symbols: st,
+            operators: st,
         }
     }
 
@@ -72,24 +74,25 @@ impl<'a, Tit> TokenIterator<'a, Tit>
 
     /// find id in text, return Name or reserved keywords
     fn handle_identifier(&mut self) -> Token {
-        let id: String = self.consume_while(|c| c.is_alphabetic() || c == '_');
+        let id: String = self.consume_while(|c| c.is_alphabetic() || c == '_' || c.is_numeric());
         match self.keywords.get(&id) {
             Some(keyword) => Token::Flag(keyword.clone()),
             _ => Token::Name(id),
         }
     }
 
-    fn handle_symbol(&mut self) -> Result<Token, TokenizeError> {
-        // Look for longer symbol first
-        for len in (1..2).rev() {
-            let n_char_sym: String = self.text_iter.clone().take(len).collect();
-            if let Some(&sym) = self.symbols.get(&n_char_sym) {
+    fn handle_operator(&mut self) -> Result<Token, TokenizeError> {
+        // Look for longer operator first
+        let max_operator_length = 2;
+        let n_char_sym: String = self.text_iter.clone().take(max_operator_length).collect();
+        for len in (1..(n_char_sym.len()+1)).rev() {            
+            if let Some(&sym) = self.operators.get(&n_char_sym[0..len]) {
                 // advance original iterator
                 let _ = self.text_iter.by_ref().take(len).count();
                 return Ok(Token::Flag(sym));
             }
         }
-        return Err(TokenizeError::InvalidSymbol);
+        return Err(TokenizeError::Invalidoperator);
     }
 
     fn handle_string(&mut self) -> Result<Token, TokenizeError> {
@@ -173,7 +176,7 @@ impl<'a, Tit> iter::Iterator for TokenIterator<'a, Tit>
                     }
                 }
                 Some(&_) => {
-                    return if let Ok(token) = self.handle_symbol() {
+                    return if let Ok(token) = self.handle_operator() {
                         Some(token)
                     } else {
                         None
@@ -220,9 +223,12 @@ mod tests {
         assert_eq!(token_it_1.next(), Some(Token::Flag(FlagType::EOF)));
         assert_eq!(token_it_1.next(), None);
 
-        let text_2 = "a, number = 0, 1".to_string();
+        let text_2 = "a, number = 0, 1
+            str = \"this is a string\"
+            b, c = true, false
+        ".to_string();
         let mut token_it_2 = lexer.tokenize(text_2.chars());
-        
+
         assert_eq!(token_it_2.next(), Some(Token::Name("a".to_string())));
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Comma)));
         assert_eq!(token_it_2.next(), Some(Token::Name("number".to_string())));
@@ -231,6 +237,18 @@ mod tests {
 
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Comma)));
         assert_eq!(token_it_2.next(), Some(Token::Num(1f64)));
+        assert_eq!(token_it_2.next(), Some(Token::Name("str".to_string())));
+        assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Assign)));
+        assert_eq!(token_it_2.next(), Some(Token::Str("this is a string".to_string())));
+
+        assert_eq!(token_it_2.next(), Some(Token::Name("b".to_string())));
+        assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Comma)));
+        assert_eq!(token_it_2.next(), Some(Token::Name("c".to_string())));
+        assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Assign)));
+        assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::True)));
+                
+        assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Comma)));
+        assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::False)));       
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::EOF)));
         assert_eq!(token_it_2.next(), None);
 

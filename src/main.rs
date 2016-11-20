@@ -32,6 +32,5 @@ mod interpreter;
 
 
 fn main() {
-    // use interpreter::test;
-    // test::test();
+
 }

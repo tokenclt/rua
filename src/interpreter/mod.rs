@@ -1,6 +1,15 @@
+pub mod symbols;
+
 use lexer::tokens::{Token, FlagType};
 use parser::{Node, Expr, Var, Stat};
 use std::collections::HashMap;
+use self::symbols::*;
+
+#[derive(Debug, Clone)]
+pub enum Variable{
+    Real(f64),
+    Str(String),
+}
 
 #[derive(Debug)]
 pub enum InterpretError {
@@ -9,13 +18,14 @@ pub enum InterpretError {
 }
 
 pub struct Interpreter {
-    symbol_table: HashMap<String, f64>,
+    global_variables: HashMap<String, f64>,
 }
 
 // Public interface
+#[allow(dead_code)]
 impl Interpreter {
     pub fn new() -> Interpreter {
-        Interpreter { symbol_table: HashMap::new() }
+        Interpreter { global_variables: HashMap::new() }
     }
 
     pub fn interpret(&mut self, n: &Node) -> Result<(), InterpretError> {
@@ -23,11 +33,12 @@ impl Interpreter {
     }
 
     pub fn print_symble_table(&self) {
-        println!("{0:?}", self.symbol_table);
+        println!("{0:?}", self.global_variables);
     }
 }
 
 //  Visit method
+#[allow(dead_code)]
 impl Interpreter {
     fn visit_expr(&mut self, e: &Expr) -> Result<f64, InterpretError> {
         match *e {
@@ -57,13 +68,15 @@ impl Interpreter {
                 }
             }
             Expr::Var(ref var) => self.visit_var(var),
+            Expr::Str(_) => unimplemented!(),
+            Expr::Boole(_) => unimplemented!(),
         }
     }
 
     fn visit_var(&mut self, v: &Var) -> Result<f64, InterpretError> {
         match *v {
             Var::Name(ref id) => {
-                match self.symbol_table.get(id) {
+                match self.global_variables.get(id) {
                     Some(&v) => Ok(v),
                     None => Err(InterpretError::UndefinedVariable),
                 }
@@ -75,7 +88,7 @@ impl Interpreter {
         match *n {
             Node::Block(ref stats) => {
                 for stat in stats {
-                    self.visit_stat(stat);
+                    try!(self.visit_stat(stat));
                 }
                 Ok(())
             }
@@ -88,18 +101,19 @@ impl Interpreter {
             Stat::Assign(ref varlist, ref exprlist) => {
                 for (&Var::Name(ref var), expr) in varlist.into_iter().zip(exprlist.into_iter()) {
                     let result = try!(self.visit_expr(expr));
-                    let v = self.symbol_table.entry(var.clone()).or_insert(result);
+                    let v = self.global_variables.entry(var.clone()).or_insert(result);
                     *v = result;
                 }
                 Ok(())
             }
             Stat::Empty => Ok(()),
+            _ => unimplemented!(),
         }
     }
 }
 
 #[cfg(test)]
-pub mod test {
+mod tests {
     use interpreter::Interpreter;
     use parser::Parser;
     use lexer::Lexer;
@@ -117,8 +131,8 @@ pub mod test {
         let mut itpt = Interpreter::new();
         let out = itpt.interpret(&Parser::parse(lexer.tokenize(text.chars())).unwrap());
         out.unwrap();
-        assert_eq!(itpt.symbol_table.get("a"), Some(&-4f64));
-        assert_eq!(itpt.symbol_table.get("_b"), Some(&-4f64));
-        assert_eq!(itpt.symbol_table.get("number"), Some(&1f64));
+        assert_eq!(itpt.global_variables.get("a"), Some(&-4f64));
+        assert_eq!(itpt.global_variables.get("_b"), Some(&-4f64));
+        assert_eq!(itpt.global_variables.get("number"), Some(&1f64));
     }
 }
