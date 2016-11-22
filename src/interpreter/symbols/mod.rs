@@ -1,8 +1,10 @@
-use std::collections::HashMap;
 use parser::{Node, Expr, Var, Stat};
 use lexer::tokens::FlagType;
+use self::symbol_table::*;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+pub mod symbol_table;
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum SymbolType {
     Real,
     Str,
@@ -16,36 +18,15 @@ pub enum SymbolError {
     Error,
 }
 
-#[derive(Debug)]
-pub struct SymbolTable {
-    symbols: HashMap<String, SymbolType>,
-}
-
-impl SymbolTable {
-    pub fn new() -> SymbolTable {
-        SymbolTable { symbols: HashMap::new() }
-    }
-
-    pub fn define(&mut self, name: &str, t: SymbolType) {
-        // insert or update
-        let slot = self.symbols.entry(name.to_string()).or_insert(t);
-        *slot = t;
-    }
-
-    pub fn lookup(&self, name: &str) -> Option<SymbolType> {
-        self.symbols.get(name).cloned()
-    }
-}
-
 #[allow(dead_code)]
 pub struct SymbolTableBuiler {
-    symbol_table: SymbolTable,
+    symbol_table: ScopedSymbolTableBuilder,
 }
 
 #[allow(dead_code)]
 impl SymbolTableBuiler {
     pub fn new() -> SymbolTableBuiler {
-        SymbolTableBuiler { symbol_table: SymbolTable::new() }
+        SymbolTableBuiler { symbol_table: ScopedSymbolTableBuilder::new() }
     }
 
     pub fn visit(&mut self, n: &Node) -> Result<(), SymbolError> {
@@ -76,7 +57,7 @@ impl SymbolTableBuiler {
             Stat::Assign(ref varlist, ref exprlist) => {
                 for (&Var::Name(ref var), expr) in varlist.into_iter().zip(exprlist.into_iter()) {
                     let result_type = try!(self.visit_expr(expr));
-                    self.symbol_table.define(var, result_type);
+                    self.symbol_table.define_global(var, result_type);
                 }
                 Ok(())
             }
