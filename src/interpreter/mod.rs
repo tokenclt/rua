@@ -1,9 +1,8 @@
-pub mod symbols;
 
 use lexer::tokens::{Token, FlagType};
 use parser::{Node, Expr, Var, Stat};
 use std::collections::HashMap;
-use self::symbols::*;
+use semantic_analyzer::*;
 
 #[derive(Debug, Clone)]
 pub enum Variable{
@@ -86,7 +85,7 @@ impl Interpreter {
 
     fn visit_block(&mut self, n: &Node) -> Result<(), InterpretError> {
         match *n {
-            Node::Block(ref stats) => {
+            Node::Block(ref stats, _) => {
                 for stat in stats {
                     try!(self.visit_stat(stat));
                 }
