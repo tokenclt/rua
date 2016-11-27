@@ -1,6 +1,15 @@
-use super::SymbolType;
 use std::collections::HashMap;
 use std::ptr;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SymbolType {
+    Real,
+    Str,
+    Boole,
+    UnKnow,
+    Nil,
+    Tuple(Vec<SymbolType>),
+}
 
 #[derive(Debug)]
 pub struct SymbolTable {
@@ -42,6 +51,7 @@ pub struct ScopedSymbolTableBuilder{
     global_scope: Box<Scope>,
 }
 
+#[allow(dead_code)]
 impl ScopedSymbolTableBuilder {
     pub fn new() -> ScopedSymbolTableBuilder{
         let mut builder = ScopedSymbolTableBuilder{current: ptr::null_mut(), 

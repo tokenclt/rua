@@ -170,7 +170,10 @@ impl<'a, Tit> Parser<'a, Tit>
     }
 
     fn expr(&mut self) -> Result<Box<Expr>, ParserError> {
-        self.disj()
+        match self.peek_clone() {
+            Some(Token::Flag(FlagType::Function)) => self.function_def().map(|e| Box::new(e)),
+            _ => self.disj(),
+        }
     }
 
     fn error() {
@@ -343,7 +346,8 @@ impl<'a, Tit> Parser<'a, Tit>
                 // create new if-else node and walk down
                 let sub_clause = Box::into_raw(Box::new(Stat::IfElse(expr, then_node, None)));
                 if let Stat::IfElse(_, _, ref mut e) = *bottom_clause {
-                    *e = Some(Box::new(Node::Block(Block::new(vec![Box::from_raw(sub_clause)], None))));
+                    *e = Some(Box::new(Node::Block(Block::new(vec![Box::from_raw(sub_clause)],
+                                                              None))));
                 } else {
                     panic!("Should not be refute");
                 }
@@ -394,7 +398,7 @@ impl<'a, Tit> Parser<'a, Tit>
     where Tit: iter::Iterator<Item = char> + Clone
 {
     /// rule : function FunctionBody
-    fn function_def(&mut self) -> Result<Expr, ParserError>{
+    fn function_def(&mut self) -> Result<Expr, ParserError> {
         self.eat(FlagType::Function).unwrap();
         let (paras, content) = try!(self.function_body());
         Ok(Expr::FunctionDef(paras, content))
@@ -436,9 +440,9 @@ impl<'a, Tit> Parser<'a, Tit>
         try!(self.eat(FlagType::RParen));
         if let Some(content) = Block::from_node_enum(*try!(self.block())) {
             return Ok((paras, Box::new(content)));
-        }else{
+        } else {
             panic!("Block should alway return a Node::Block");
         }
-        
+
     }
 }

@@ -1,18 +1,6 @@
 use parser::types::{Node, Expr, Var, Stat, Block};
 use lexer::tokens::FlagType;
-use self::symbol_table::*;
-
-pub mod symbol_table;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum SymbolType {
-    Real,
-    Str,
-    Boole,
-    UnKnow,
-    Nil,
-    Tuple(Vec<SymbolType>),
-}
+use compiler::symbol_table::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SymbolError {
@@ -182,7 +170,7 @@ mod tests {
     use parser::Parser;
     use lexer::Lexer;
     use semantic_analyzer::*;
-    use semantic_analyzer::symbol_table::*;
+    use compiler::symbol_table::*;
 
     #[test]
     fn test_type_check() {
