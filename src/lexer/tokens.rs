@@ -60,6 +60,8 @@ pub enum FlagType {
     AND,
     OR,
 
+    ThreeDot,
+
     EOF,
 
     
@@ -112,8 +114,9 @@ pub fn get_operator_table() -> HashMap<String, FlagType> {
         "<=" => FlagType::LEQ,
         ">=" => FlagType::GEQ,
         "<" => FlagType::LESS,
-        ">" => FlagType::GREATER
-       
+        ">" => FlagType::GREATER,
+        "..." => FlagType::ThreeDot
+        
     }
 }
 

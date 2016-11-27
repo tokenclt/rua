@@ -83,7 +83,7 @@ impl<'a, Tit> TokenIterator<'a, Tit>
 
     fn handle_operator(&mut self) -> Result<Token, TokenizeError> {
         // Look for longer operator first
-        let max_operator_length = 2;
+        let max_operator_length = 3;
         let n_char_sym: String = self.text_iter.clone().take(max_operator_length).collect();
         for len in (1..(n_char_sym.len()+1)).rev() {            
             if let Some(&sym) = self.operators.get(&n_char_sym[0..len]) {

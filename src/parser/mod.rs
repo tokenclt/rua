@@ -1,45 +1,9 @@
 use lexer::tokens::{Token, FlagType};
 use lexer::{Lexer, TokenIterator};
+use self::types::*;
 use std::iter;
-use std::ops::DerefMut;
 
-pub enum Expr {
-    Num(f64),
-    Boole(bool),
-    Var(Var),
-    Str(String),
-    BinOp(FlagType, Box<Expr>, Box<Expr>),
-    UnaryOp(FlagType, Box<Expr>),
-}
-
-type Name = String;
-
-pub enum Var {
-    Name(Name),
-}
-
-pub enum Stat {
-    Empty,
-    Break,
-    // is_local
-    Assign(Vec<Var>, Vec<Box<Expr>>),
-    AssignLocal(Vec<Name>, Vec<Box<Expr>>),
-    IfElse(Box<Expr>, Box<Node>, Option<Box<Node>>),
-    While(Box<Expr>, Box<Node>),
-    ForRange(Vec<Name>, Vec<Box<Expr>>, Box<Node>),
-}
-
-pub enum Node {
-    Expr(Expr),
-    Block(Vec<Box<Stat>>, Option<Vec<Box<Expr>>>),
-}
-
-#[derive(Debug)]
-pub enum ParserError {
-    SyntaxError,
-    ExpectationUnmeet,
-    ParseFailed,
-}
+pub mod types;
 
 pub struct Parser<'a, Tit>
     where Tit: iter::Iterator<Item = char> + Clone
@@ -231,7 +195,7 @@ impl<'a, Tit> Parser<'a, Tit>
             stats.push(stat);
         }
         let ret = self.retstat().ok();
-        Ok(Box::new(Node::Block(stats, ret)))
+        Ok(Box::new(Node::Block(Block::new(stats, ret))))
         // TODO: Retstat
     }
 
@@ -252,12 +216,12 @@ impl<'a, Tit> Parser<'a, Tit>
                         e @ _ => e,
                     }
                 }
-                Token::Flag(FlagType::If) => self.if_else_clause(),
-                _ => Err(ParserError::SyntaxError),
+                Token::Flag(FlagType::If) => self.if_else_clause(),                
                 Token::Flag(FlagType::Break) => {
                     self.eat(FlagType::Break).unwrap();
                     Ok(Box::new(Stat::Break))
                 }
+                _ => unimplemented!(),
             }
         } else {
             Err(ParserError::SyntaxError)
@@ -379,7 +343,7 @@ impl<'a, Tit> Parser<'a, Tit>
                 // create new if-else node and walk down
                 let sub_clause = Box::into_raw(Box::new(Stat::IfElse(expr, then_node, None)));
                 if let Stat::IfElse(_, _, ref mut e) = *bottom_clause {
-                    *e = Some(Box::new(Node::Block(vec![Box::from_raw(sub_clause)], None)));
+                    *e = Some(Box::new(Node::Block(Block::new(vec![Box::from_raw(sub_clause)], None))));
                 } else {
                     panic!("Should not be refute");
                 }
@@ -422,5 +386,59 @@ impl<'a, Tit> Parser<'a, Tit>
         try!(self.eat(FlagType::Do).or(Err(ParserError::SyntaxError)));
         let block = try!(self.block());
         Ok(Box::new(Stat::ForRange(namelist, exprlist, block)))
+    }
+}
+
+/// function def and call
+impl<'a, Tit> Parser<'a, Tit>
+    where Tit: iter::Iterator<Item = char> + Clone
+{
+    /// rule : function FunctionBody
+    fn function_def(&mut self) -> Result<Expr, ParserError>{
+        self.eat(FlagType::Function).unwrap();
+        let (paras, content) = try!(self.function_body());
+        Ok(Expr::FunctionDef(paras, content))
+    }
+    /// rule: Namelist [ , ...]
+    fn parlist(&mut self) -> Result<(Vec<Name>, bool), ParserError> {
+        // can not use namelist,
+        // three dot exist
+        let mut list = vec![try!(self.name())];
+        let mut multiret = false;
+        while let Some(token) = self.peek_clone() {
+            match token {
+                Token::Flag(FlagType::Comma) => {
+                    self.eat(FlagType::Comma).unwrap();
+                    match self.name() {
+                        Ok(name) => list.push(name),
+                        Err(_) => {
+                            if let Some(Token::Flag(FlagType::ThreeDot)) = self.peek_clone() {
+                                self.eat(FlagType::ThreeDot).unwrap();
+                                multiret = true;
+                            } else {
+                                return Err(ParserError::SyntaxError);
+                            }
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        Ok((list, multiret))
+    }
+
+    /// rule ( [parlist] ) Block end
+    fn function_body(&mut self) -> Result<((Vec<Name>, bool), Box<Block>), ParserError> {
+        try!(self.eat(FlagType::LParen));
+        // if parlist parse failed
+        // it means no paras, use a empty list
+        let paras = self.parlist().unwrap_or((vec![], false));
+        try!(self.eat(FlagType::RParen));
+        if let Some(content) = Block::from_node_enum(*try!(self.block())) {
+            return Ok((paras, Box::new(content)));
+        }else{
+            panic!("Block should alway return a Node::Block");
+        }
+        
     }
 }

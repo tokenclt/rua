@@ -1,4 +1,4 @@
-use parser::{Node, Expr, Var, Stat};
+use parser::types::{Node, Expr, Var, Stat, Block};
 use lexer::tokens::FlagType;
 use self::symbol_table::*;
 
@@ -56,8 +56,9 @@ impl SemanticAnalyzer {
 #[allow(dead_code)]
 impl SemanticAnalyzer {
     fn visit_block(&mut self, n: &Node) -> Result<SymbolType, SymbolError> {
-        match *n {
-            Node::Block(ref stats, ref ret) => {
+        self.symbol_table.initialize_scope();
+        let result = match *n {
+            Node::Block(Block{ref stats, ref ret}) => {
                 for stat in stats {
                     try!(self.visit_stat(stat));
                 }
@@ -77,7 +78,9 @@ impl SemanticAnalyzer {
                 }
             }
             _ => Err(SymbolError::Error),
-        }
+        };
+        self.symbol_table.finalize_scope();
+        result
     }
 
     fn visit_stat(&mut self, stat: &Stat) -> Result<(), SymbolError> {
@@ -88,6 +91,9 @@ impl SemanticAnalyzer {
                     self.symbol_table.define_global(var, result_type);
                 }
                 Ok(())
+            }
+            Stat::AssignLocal(ref namelist, ref exprlist) => {
+                unimplemented!()
             }
             Stat::IfElse(ref condition, ref then_node, ref else_node) => {
                 try!(self.visit_expr(condition).and_then(|t| if t == SymbolType::Boole {
@@ -139,6 +145,7 @@ impl SemanticAnalyzer {
             Expr::Var(ref var) => self.visit_var(var),
             Expr::Str(_) => Ok(SymbolType::Str),
             Expr::Boole(_) => Ok(SymbolType::Boole),
+            Expr::FunctionDef(..) => unimplemented!(),
         }
     }
 
