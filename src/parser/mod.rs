@@ -2,6 +2,7 @@ use lexer::tokens::{Token, FlagType};
 use lexer::{Lexer, TokenIterator};
 use self::types::*;
 use std::iter;
+use std::ops::Deref;
 
 pub mod types;
 
@@ -22,7 +23,13 @@ impl<'a, Tit> Parser<'a, Tit>
         obj.program()
     }
 
-    pub fn peek_clone(&mut self) -> Option<Token> {
+    pub fn ast_from_text(text: &String) -> Result<Box<Node>, ParserError> {
+        let lex = Lexer::new();
+        let token_it = lex.tokenize(text.chars());
+        Parser::parse(token_it)
+    }
+
+    fn peek_clone(&mut self) -> Option<Token> {
         self.token_iter.peek().map(|t| t.clone())
     }
 
@@ -204,31 +211,44 @@ impl<'a, Tit> Parser<'a, Tit>
 
     /// rule: Stat: Colons | (Varlist Assign ExprList)
     fn stat(&mut self) -> Result<Box<Stat>, ParserError> {
-        if let Some(token) = self.peek_clone() {
-            match token {
-                Token::Flag(flag) if flag == FlagType::Colons || flag == FlagType::EOF => {
-                    self.eat(flag).unwrap();
-                    Ok(Box::new(Stat::Empty))
-                }
-                Token::Flag(FlagType::Local) => self.assign_local(),
-                Token::Name(_) => {
-                    let it_backup = self.token_iter.clone();
-                    match self.assign() {
-                        Ok(stat) => Ok(stat),
-                        Err(ParserError::ExpectationUnmeet) => unimplemented!(),
-                        e @ _ => e,
+        loop {
+            let attempt = if let Some(token) = self.peek_clone() {
+                match token {
+                    Token::Flag(flag) if flag == FlagType::Colons || flag == FlagType::EOF => {
+                        self.eat(flag).unwrap();
+                        Ok(Box::new(Stat::Empty))
                     }
+                    Token::Flag(FlagType::Local) => self.assign_local(),
+                    Token::Name(_) => {
+                        let it_backup = self.token_iter.clone();
+                        match self.assign() {
+                            Ok(stat) => Ok(stat),
+                            Err(ParserError::ExpectationUnmeet) => unimplemented!(),
+                            e @ _ => e,
+                        }
+                    }
+                    Token::Flag(FlagType::If) => self.if_else_clause(),                
+                    Token::Flag(FlagType::Break) => {
+                        self.eat(FlagType::Break).unwrap();
+                        Ok(Box::new(Stat::Break))
+                    }
+                    _ => unimplemented!(),
                 }
-                Token::Flag(FlagType::If) => self.if_else_clause(),                
-                Token::Flag(FlagType::Break) => {
-                    self.eat(FlagType::Break).unwrap();
-                    Ok(Box::new(Stat::Break))
+            } else {
+                Err(ParserError::SyntaxError)
+            };
+            if let Ok(stat) = attempt {
+                // if stat is empty, drop it and keep parsing
+                if stat.deref() != &Stat::Empty{
+                    // ownership, attempt is moved
+                    return Ok(stat)
                 }
-                _ => unimplemented!(),
-            }
-        } else {
-            Err(ParserError::SyntaxError)
+                // Err
+            }else {
+                return attempt;
+            } 
         }
+
     }
 
     /// rule: assign: Varlist = Exprlist

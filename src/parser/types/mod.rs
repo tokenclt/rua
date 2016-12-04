@@ -1,7 +1,7 @@
 use std::ops::{DerefMut, Deref};
 use lexer::tokens::{Token, FlagType};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
     Num(f64),
     Boole(bool),
@@ -13,7 +13,7 @@ pub enum Expr {
     FunctionDef((Vec<Name>, bool), Box<Block>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Block {
     pub stats: Vec<Box<Stat>>,
     pub ret: Option<Vec<Box<Expr>>>,
@@ -38,12 +38,12 @@ impl Block {
 
 pub type Name = String;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Var {
     Name(Name),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Stat {
     Empty,
     Break,
@@ -55,7 +55,7 @@ pub enum Stat {
     ForRange(Vec<Name>, Vec<Box<Expr>>, Box<Node>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Node {
     Expr(Expr),
     Block(Block),

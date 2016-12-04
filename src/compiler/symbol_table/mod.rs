@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ptr;
+use super::types::Usize;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SymbolType {
@@ -9,6 +10,13 @@ pub enum SymbolType {
     UnKnow,
     Nil,
     Tuple(Vec<SymbolType>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SymbolScope{
+    Local,
+    UpValue,
+    Global,
 }
 
 #[derive(Debug)]
@@ -33,32 +41,39 @@ impl SymbolTable {
 }
 
 #[derive(Debug)]
-struct Scope{
-    symbols: HashMap<String, SymbolType>,
+struct Scope {
+    symbols: HashMap<String, Usize>,
     children: Vec<Scope>,
     parent: *mut Scope,
 }
 
 impl Scope {
-    pub fn new() -> Scope{
-        Scope{symbols: HashMap::new(), children: vec![], parent: ptr::null_mut()}
+    pub fn new() -> Scope {
+        Scope {
+            symbols: HashMap::new(),
+            children: vec![],
+            parent: ptr::null_mut(),
+        }
     }
 }
 
 #[derive(Debug)]
-pub struct ScopedSymbolTableBuilder{
+pub struct ScopedSymbolTableBuilder {
     current: *mut Scope,
-    global_scope: Box<Scope>,
+    global_scope: HashSet<String>,
+    root_scope: Box<Scope>,
 }
 
 #[allow(dead_code)]
 impl ScopedSymbolTableBuilder {
-    pub fn new() -> ScopedSymbolTableBuilder{
-        let mut builder = ScopedSymbolTableBuilder{current: ptr::null_mut(), 
-        global_scope: Box::new(Scope::new())};
-        builder.current = Box::into_raw(builder.global_scope);
-        unsafe{
-            builder.global_scope = Box::from_raw(builder.current);    
+    pub fn new() -> ScopedSymbolTableBuilder {
+        let mut builder = ScopedSymbolTableBuilder {
+            current: ptr::null_mut(),
+            root_scope: Box::new(Scope::new()),
+            global_scope: HashSet::new(),
+        };
+        unsafe {
+            builder.current = builder.root_scope.as_mut() as *mut Scope;
         }
         builder
     }
@@ -73,39 +88,50 @@ impl ScopedSymbolTableBuilder {
         }
     }
 
+    // TODO: add delete precessure
     pub fn finalize_scope(&mut self) {
-        unsafe{
+        unsafe {
+            (*self.current).children.clear();
             self.current = (*self.current).parent;
         }
     }
 
-    pub fn define_global(&mut self, name: &str, t: SymbolType) {
-        let slot = self.global_scope.symbols.entry(name.to_string()).or_insert(t.clone());
-        *slot = t;
-    } 
+    pub fn define_global(&mut self, name: &str) {
+        let slot = self.global_scope.insert(name.to_string());
+    }
 
-    pub fn define_local(&mut self, name: &str, t: SymbolType) {
-        unsafe{
-            let slot = (*self.current).symbols.entry(name.to_string()).or_insert(t.clone());
-            *slot = t;
+    pub fn define_local(&mut self, name: &str, pos: Usize) {
+        unsafe {
+            let slot = (*self.current).symbols.entry(name.to_string()).or_insert(pos);
+            *slot = pos;
         }
     }
 
-    pub fn lookup(&self, name: &str) -> Option<SymbolType> {
-        unsafe{
+    // lookup in current scope or parent scope
+    // ret: scope type, pos
+    pub fn lookup(&self, name: &str) -> Option<(SymbolScope, Usize)> {
+        unsafe {
             let mut cursor = self.current;
-            // as_ref() is amazing!!! 
-            // hide difference between Box and pointer
-            while let Some(_) = cursor.as_ref() {
-                print!("{:?}", *cursor);
-                if let Some(t) = (*cursor).symbols.get(name) {
-                    
-                    return Some(t.clone());
-                }else{
-                    cursor = (*cursor).parent;
+            //  symbol can be find in current scope
+            //  as_ref : check nullptr
+            if let Some(_) = cursor.as_ref() {
+                if let Some(&pos) = (*cursor).symbols.get(name){
+                    return Some((SymbolScope::Local, pos));
                 }
             }
-            return None;
+            // if not find, move up
+            cursor = (*cursor).parent;
+            if let Some(_) = cursor.as_ref() {
+                if let Some(&pos) = (*cursor).symbols.get(name) {
+                    return Some((SymbolScope::UpValue, pos));
+                }
+            }
         }
-    } 
+        // if not found, then lookup in global scope
+        if self.global_scope.contains(name) {
+            Some((SymbolScope::Global, 0))
+        } else {
+            None
+        }
+    }
 }

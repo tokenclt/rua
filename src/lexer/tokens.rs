@@ -13,7 +13,7 @@ macro_rules! map(
 );
 
 ///  Token
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
 #[allow(dead_code)]
 pub enum FlagType {
     // variable type

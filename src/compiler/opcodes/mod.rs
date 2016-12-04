@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+use std::collections::HashMap;
+use lexer::tokens::FlagType;
+
 
 const SIZE_C: u32 = 9;
 const SIZE_B: u32 = 9;
@@ -7,28 +10,124 @@ const SIZE_A: u32 = 8;
 const SIZE_OP: u32 = 6;
 
 const POS_OP: u32 = 0;
-const POS_A: u32 = POS_OP + 0;
+const POS_A: u32 = POS_OP + SIZE_OP;
 const POS_C: u32 = POS_A + SIZE_A;
 const POS_B: u32 = POS_C + SIZE_C;
 const POS_Bx: u32 = POS_C;
 
-pub fn mask_1(len: u32, posi: u32) -> u32{
-    ( u32::max_value() >> (32 - len) ) << posi
+/// create a 1's mask
+pub fn mask_1(len: u32, posi: u32) -> u32 {
+    (u32::max_value() >> (32 - len)) << posi
 }
 
-pub fn mask_0(len: u32, posi: u32) -> u32{
+/// create a 0's mask
+pub fn mask_0(len: u32, posi: u32) -> u32 {
     !mask_1(len, posi)
 }
 
+#[allow(non_camel_case_types)]
+#[derive(Clone, Debug)]
+pub enum OpMode {
+    iABC,
+    iABx,
+    iAsBx,
+}
 
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum OpName {
+    // Name           Opcode      Description
+    MOVE, //          0           R(A) := R(B)
+    LOADK, //         1           R(A) := Kst(Bx)
+    LOADBOOL, //      2           R(A) := (Bool)B if(C) pc++
+    LOADNIL, //       3           R(A) := ... = R(B) := nil
+    GETUPVAL, //      4           R(A) := UpValue[B]
+
+    GETGLOBAL, //     5           R(A) := Gbl(Kst(Bx))
+    GETTABLE, //      6           R(A) := R(B)[RK(C)]
+
+    SETGLOBAL, //     7           Glb[Kst(Bx)] := R(A)
+    SETUPVAL, //      8           UpValue[B] := RK(C)
+    SETTABLE, //      9           R(A)[RK(B)] := RK(C)
+    NEWTABLE, //      10          R(A) := {} (size = B, C)
+    SELF, //          11          R(A+1) := R(B); R(A) := R(B)[RK(C)]
+
+    ADD, //           12          R(A) := RK(B) + RK(C)
+    SUB, //           13          R(A) := RK(B) - RK(C)
+    MUL, //           14          R(A) := RK(B) * RK(C)
+    DIV, //           15          R(A) := RK(B) / RK(C)
+    MOD, //           16          R(A) := RK(B) % RK(C)
+    POW, //           17          R(A) := RK(B) ^ RK(C)
+    UNM, //           18          R(A) := ~R(B)
+    NOT, //           19          R(A) := not R(B)
+    LEN, //           20          R(A) := length of R(B)
+}
+
+macro_rules! map(
+    { $($key:expr => $value:expr),+ } => {
+        {
+            let mut m = HashMap::new();
+            $(
+                m.insert($key, $value);
+            )+
+            m
+        }
+     };
+);
+
+pub fn get_opflag_opname_map() -> HashMap<FlagType, OpName> {
+    map!{
+        FlagType::Plus => OpName::ADD,
+        FlagType::Minus => OpName::SUB,
+        FlagType::Mul => OpName::MUL,
+        FlagType::Div => OpName::DIV
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct OpcodeBuilder {
+}
+
+#[allow(non_snake_case)]
+impl OpcodeBuilder {
+    pub fn iABC(op: OpName, A: u32, B: u32, C: u32) -> u32 {
+        if A > mask_1(SIZE_A, 0) || B > mask_1(SIZE_B, 0) || C > mask_1(SIZE_C, 0) {
+            panic!("Instuction parameter overflow");
+        }
+        (op as u32) | A << POS_A | B << POS_B | C << POS_C
+    }
+
+    pub fn iABx(op: OpName, A: u32, Bx: u32) -> u32 {
+        if A > mask_1(SIZE_A, 0) || Bx > mask_0(SIZE_Bx, 0) {
+            panic!("Instuction parameter overflow");
+        }
+        (op as u32) | A << POS_A | Bx << POS_Bx
+    }
+
+    pub fn iAsBx(op: OpName, A: u32, sBx: i32) -> u32 {
+        // trancate
+        let trancated: u32 = ((sBx << ((32 - SIZE_Bx) as u32)) as u32) >> ((32 - SIZE_Bx) as u32);
+        if A > mask_1(SIZE_A, 0) {
+            panic!("Instuction parameter overflow");
+        }
+        (op as u32) | A << POS_A | trancated << POS_Bx
+    }
+}
 
 #[cfg(test)]
-mod tests{
+mod tests {
     use super::*;
 
     #[test]
     fn test_mask() {
         assert_eq!(0x00ff0000_u32, mask_1(8, 16));
         assert_eq!(0xffff000f_u32, mask_0(12, 4));
+    }
+
+    #[test]
+    fn test_opcode_generator() {
+        // loadk 0 1
+        assert_eq!(OpcodeBuilder::iABx(OpName::LOADK, 0, 1), 0x00004001_u32);
     }
 }
