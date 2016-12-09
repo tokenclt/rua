@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::collections::HashMap;
 use lexer::tokens::FlagType;
-
+use super::types::*;
 
 const SIZE_C: u32 = 9;
 const SIZE_B: u32 = 9;
@@ -28,9 +28,9 @@ pub fn mask_0(len: u32, posi: u32) -> u32 {
 #[allow(non_camel_case_types)]
 #[derive(Clone, Debug)]
 pub enum OpMode {
-    iABC,
-    iABx,
-    iAsBx,
+    iABC(OpName, u32, u32, u32),
+    iABx(OpName, u32, u32),
+    iAsBx(OpName, u32, u32),
 }
 
 #[allow(dead_code)]
@@ -61,6 +61,28 @@ pub enum OpName {
     UNM, //           18          R(A) := ~R(B)
     NOT, //           19          R(A) := not R(B)
     LEN, //           20          R(A) := length of R(B)
+
+    CONCAT, //        21          R(A) := R(B) .. ... .. R(C)
+    JMP, //           22          pc += sBx
+    EQ, //            23          if ((RK(B) == RK(C)) ~= A) then pc++
+    LT, //            24          if ((RK(B) <  RK(C)) ~= A) then pc++
+    LE, //            25          if ((RK(B) <= RK(C)) ~= A) then pc++
+
+    TEST, //          26          if not (R(A) <=> C) then pc++
+    TESTSET, //       27          if (R(B) <=> C) then R(A) := R(B) else pc++
+    CALL, //          28          R(A), ... ,R(A+C-2) := R(A)(R(A+1), ... ,R(A+B-1))
+    TAILCALL, //      29          return R(A)(R(A+1), ... ,R(A+B-1))
+    RETURN, //        30          return R(A), ... ,R(A+B-2)
+
+    FORLOOP, //       31          R(A)+=R(A+2);
+    //                            if R(A) <?= R(A+1) then { pc+=sBx; R(A+3)=R(A) }
+    FORPREP, //       32          R(A)-=R(A+2); pc+=sBx
+    TFORLOOP, //      33          R(A+3), ... ,R(A+2+C) := R(A)(R(A+1), R(A+2));
+    //                            if R(A+3) ~= nil then R(A+2)=R(A+3) else pc++
+    SETLIST, //       34          R(A)[(C-1)*FPF+i] := R(A+i), 1 <= i <= B
+    CLOSE, //         35          close all variables in the stack up to (>=) R(A)
+    CLOSURE, //       36          R(A) := closure(KPROTO[Bx], R(A), ... ,R(A+n))
+    VARARG, //        37          R(A), R(A+1), ..., R(A+B-1) = vararg
 }
 
 macro_rules! map(

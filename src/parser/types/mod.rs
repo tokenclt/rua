@@ -10,7 +10,7 @@ pub enum Expr {
     BinOp(FlagType, Box<Expr>, Box<Expr>),
     UnaryOp(FlagType, Box<Expr>),
     // named paras and has_unnamed
-    FunctionDef((Vec<Name>, bool), Box<Block>),
+    FunctionDef((Vec<Name>, bool), Box<Node>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,6 +53,7 @@ pub enum Stat {
     IfElse(Box<Expr>, Box<Node>, Option<Box<Node>>),
     While(Box<Expr>, Box<Node>),
     ForRange(Vec<Name>, Vec<Box<Expr>>, Box<Node>),
+    Ret(Vec<Box<Expr>>)
 }
 
 #[derive(Clone, Debug, PartialEq)]

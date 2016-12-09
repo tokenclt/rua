@@ -94,7 +94,8 @@ pub fn get_keyword_table() -> HashMap<String, FlagType> {
         "elseif" => FlagType::Elseif,
         "for" => FlagType::For,
         "in" => FlagType::In,
-        "function" => FlagType::Function
+        "function" => FlagType::Function,
+        "return" => FlagType::Return
     }
 }
 

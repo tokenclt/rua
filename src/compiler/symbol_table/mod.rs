@@ -13,9 +13,9 @@ pub enum SymbolType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum SymbolScope{
+pub enum SymbolScope {
     Local,
-    UpValue,
+    UpValue(u32), // path_length, immidiate parent: 1
     Global,
 }
 
@@ -102,6 +102,7 @@ impl ScopedSymbolTableBuilder {
 
     pub fn define_local(&mut self, name: &str, pos: Usize) {
         unsafe {
+            // avoiding duplication included
             let slot = (*self.current).symbols.entry(name.to_string()).or_insert(pos);
             *slot = pos;
         }
@@ -115,15 +116,20 @@ impl ScopedSymbolTableBuilder {
             //  symbol can be find in current scope
             //  as_ref : check nullptr
             if let Some(_) = cursor.as_ref() {
-                if let Some(&pos) = (*cursor).symbols.get(name){
+                if let Some(&pos) = (*cursor).symbols.get(name) {
                     return Some((SymbolScope::Local, pos));
                 }
             }
             // if not find, move up
             cursor = (*cursor).parent;
-            if let Some(_) = cursor.as_ref() {
+            let mut path_length = 1_u32;
+            while let Some(_) = cursor.as_ref() {
                 if let Some(&pos) = (*cursor).symbols.get(name) {
-                    return Some((SymbolScope::UpValue, pos));
+                    // pos: register in current level, not immidiate 
+                    return Some((SymbolScope::UpValue(path_length), pos));
+                } else {
+                    path_length = path_length + 1;
+                    cursor = (*cursor).parent;
                 }
             }
         }

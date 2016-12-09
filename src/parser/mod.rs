@@ -220,9 +220,12 @@ impl<'a, Tit> Parser<'a, Tit>
                     }
                     Token::Flag(FlagType::Local) => self.assign_local(),
                     Token::Name(_) => {
+                        // back up current position
                         let it_backup = self.token_iter.clone();
+                        // try parse by rule: assign list of expr to list of name
                         match self.assign() {
                             Ok(stat) => Ok(stat),
+                            // if failed , parse by rule: assign function 
                             Err(ParserError::ExpectationUnmeet) => unimplemented!(),
                             e @ _ => e,
                         }
@@ -232,6 +235,9 @@ impl<'a, Tit> Parser<'a, Tit>
                         self.eat(FlagType::Break).unwrap();
                         Ok(Box::new(Stat::Break))
                     }
+                    Token::Flag(FlagType::Return) => self.retstat().map(|exprs| Box::new(Stat::Ret(exprs))),
+                    //  return an error , this will stop parsing block
+                    Token::Flag(FlagType::End) => Err(ParserError::ExpectationUnmeet),
                     _ => unimplemented!(),
                 }
             } else {
@@ -239,14 +245,14 @@ impl<'a, Tit> Parser<'a, Tit>
             };
             if let Ok(stat) = attempt {
                 // if stat is empty, drop it and keep parsing
-                if stat.deref() != &Stat::Empty{
+                if stat.deref() != &Stat::Empty {
                     // ownership, attempt is moved
-                    return Ok(stat)
+                    return Ok(stat);
                 }
                 // Err
-            }else {
+            } else {
                 return attempt;
-            } 
+            }
         }
 
     }
@@ -421,6 +427,7 @@ impl<'a, Tit> Parser<'a, Tit>
     fn function_def(&mut self) -> Result<Expr, ParserError> {
         self.eat(FlagType::Function).unwrap();
         let (paras, content) = try!(self.function_body());
+        try!(self.eat(FlagType::End));
         Ok(Expr::FunctionDef(paras, content))
     }
     /// rule: Namelist [ , ...]
@@ -452,17 +459,13 @@ impl<'a, Tit> Parser<'a, Tit>
     }
 
     /// rule ( [parlist] ) Block end
-    fn function_body(&mut self) -> Result<((Vec<Name>, bool), Box<Block>), ParserError> {
+    fn function_body(&mut self) -> Result<((Vec<Name>, bool), Box<Node>), ParserError> {
         try!(self.eat(FlagType::LParen));
         // if parlist parse failed
         // it means no paras, use a empty list
         let paras = self.parlist().unwrap_or((vec![], false));
         try!(self.eat(FlagType::RParen));
-        if let Some(content) = Block::from_node_enum(*try!(self.block())) {
-            return Ok((paras, Box::new(content)));
-        } else {
-            panic!("Block should alway return a Node::Block");
-        }
-
+        let body = try!(self.block());
+        Ok((paras, body))
     }
 }

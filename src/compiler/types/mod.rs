@@ -1,4 +1,5 @@
 use std::mem::transmute;
+use super::opcodes::OpMode;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ConstType {
@@ -6,6 +7,50 @@ pub enum ConstType {
     Boole(bool),
     Real(f64),
     Str(String),
+}
+
+#[derive(Debug)]
+pub struct FunctionChunk {
+    pub upvalue_num: Usize,
+    pub para_num: Usize,
+    pub is_vararg: bool,
+    pub stack_size: Usize,
+    pub ins_len: Usize,
+    pub instructions: Vec<OpMode>,
+    pub constants: Vec<u32>, // encoded constant list
+    pub funclist_len: Usize,
+    pub function_prototypes: Vec<FunctionChunk>,
+}
+
+impl FunctionChunk {
+    pub fn new() -> FunctionChunk {
+        FunctionChunk {
+            upvalue_num: 0,
+            para_num: 0,
+            is_vararg: true,
+            stack_size: 0,
+            ins_len: 0,
+            instructions: vec![],
+            constants: vec![],
+            funclist_len: 0,
+            function_prototypes: vec![],
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct FunctionPrototype {
+    pub prototype: FunctionChunk,
+    pub upvalue_list: Vec<(bool, u32, u32)>, /* (is_immidiate(depth == 1), pos in upvalue list, parent register number) */
+}
+
+impl FunctionPrototype {
+    pub fn new(chunk: FunctionChunk, uv_list: Vec<(bool, u32, u32)>) -> FunctionPrototype {
+        FunctionPrototype {
+            prototype: chunk,
+            upvalue_list: uv_list,
+        }
+    }
 }
 
 pub trait ToBytecode {
@@ -37,10 +82,14 @@ impl ToBytecode for String {
                 bits.push(transmute::<[u8; 4], u32>(bitpattern));
             }
         }
-        let mut residue_bits = byte_iter.fold(0_u32, |bytes, &byte| (bytes << 8) | byte as u32);
-        // left zero pading
-        residue_bits = residue_bits << (8 * (4 - residue));
-        bits.push(residue_bits);
+        // without zero checking
+        // shifting overflow would happen
+        if residue > 0 {
+            let mut residue_bits = byte_iter.fold(0_u32, |bytes, &byte| (bytes << 8) | byte as u32);
+            // left zero pading
+            residue_bits = residue_bits << (8 * (4 - residue));
+            bits.push(residue_bits);
+        }
         bits
     }
 }

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use super::types::{ConstType, Usize, ToBytecode};
+use std::ptr;
+use super::types::*;
 
 #[derive(Debug)]
 pub struct RegisterAlloc {
@@ -15,7 +16,7 @@ impl RegisterAlloc {
         }
     }
 
-    pub fn get_register(&mut self, name: Option<&str>) -> Usize {
+    pub fn push(&mut self, name: Option<&str>) -> Usize {
         match name {
             Some(name) => {
                 match self.name_indexer.get(name) {
@@ -28,12 +29,20 @@ impl RegisterAlloc {
                 }
             }
             None => {
-                self.name_indexer.insert("__TEMP__".to_string() + &self.counter.to_string(), self.counter);
+                self.name_indexer.insert("__TEMP__".to_string() + &self.counter.to_string(),
+                                         self.counter);
                 self.counter += 1;
                 self.counter - 1
             }  
         }
+    }
 
+    //  allocate an register with provided register position
+    //  used when convering a temperary register to a named register
+    pub fn push_set(&mut self, name: &str, pos: Usize) -> Usize {
+        self.name_indexer.insert(name.to_string(), pos);
+        // do not need to increase counter
+        pos
     }
 
     pub fn size(&self) -> Usize {
@@ -49,19 +58,22 @@ pub struct ConstAlloc {
 
 impl ConstAlloc {
     pub fn new() -> ConstAlloc {
-        ConstAlloc { storage: Vec::new() ,str_index: HashMap::new()}
+        ConstAlloc {
+            storage: Vec::new(),
+            str_index: HashMap::new(),
+        }
     }
 
     pub fn push(&mut self, val: ConstType) -> Usize {
-        match val{
+        match val {
             ConstType::Str(ref s) => {
-                if let Some(&pos) = self.str_index.get(s) {
-                    pos as Usize
-                }else{
+                if let Some(&final_pos) = self.str_index.get(s) {
+                    final_pos as Usize
+                } else {
                     self.storage.push(val.clone());
-                    let pos = self.storage.len() - 1;
-                    self.str_index.insert(s.clone(), pos);
-                    pos as Usize
+                    let final_pos = self.storage.len() - 1;
+                    self.str_index.insert(s.clone(), final_pos);
+                    final_pos as Usize
                 }
             }
             _ => {
@@ -108,9 +120,90 @@ impl ConstAlloc {
 }
 
 #[derive(Debug)]
+pub struct UpValueAlloc {
+    name_indexer: HashMap<String, (Usize, Usize, Usize)>, /* (depth, pos in upvalue list, pos in parent stack) */
+    counter: usize,
+}
+
+impl UpValueAlloc {
+    pub fn new() -> UpValueAlloc {
+        UpValueAlloc {
+            name_indexer: HashMap::new(),
+            counter: 0,
+        }
+    }
+
+    pub fn push(&mut self, name: &str, depth: Usize, final_pos_in_parent: Usize) -> Usize {
+        match self.name_indexer.get(name) {
+            Some(&(_, pos, _)) => pos, // avoid duplication
+            None => {
+                self.name_indexer.insert(name.to_string(),
+                                         (depth, self.counter as Usize, final_pos_in_parent));
+                self.counter = self.counter + 1;
+                (self.counter - 1) as Usize
+            }
+        }
+    }
+
+    pub fn into_list(self) -> Vec<(bool, Usize, Usize)> {
+        let mut list = Vec::with_capacity(self.name_indexer.len());
+        for &(depth, pos_in_ul, pos_in_parent) in self.name_indexer.values() {
+            // is_immidiate
+            // when is_immidiate, generate move
+            //     else generate getupvalue
+            list.push((if depth > 1 { false } else { true }, pos_in_ul, pos_in_parent));
+        }
+        list
+    }
+
+    /// if upvalue is already pushed into upvalue list
+    pub fn get(&self, name: &str) -> Option<Usize> {
+        self.name_indexer.get(name).map(|t| t.0) // extract pos in upvalue list
+    }
+
+    // modify the register number where upvalue stored in upper scope
+    pub fn set_upper_index(&mut self, name: &str, final_pos: Usize) {
+        let &(depth, self_final_pos, _) = self.name_indexer.get(name).unwrap();
+        *self.name_indexer.get_mut(name).unwrap() = (depth, self_final_pos, final_pos);
+    }
+
+    pub fn size(&self) -> usize {
+        self.name_indexer.len()
+    }
+}
+
+#[derive(Debug)]
+/// function prototypes
+pub struct FunctionAlloc {
+    functions: Vec<FunctionChunk>,
+}
+
+impl FunctionAlloc {
+    pub fn new() -> FunctionAlloc {
+        FunctionAlloc { functions: vec![] }
+    }
+
+    pub fn push(&mut self, function: FunctionChunk) -> Usize {
+        self.functions.push(function);
+        (self.functions.len() - 1 ) as Usize
+    }
+
+    pub fn size(&self) -> usize {
+        self.functions.len()
+    }
+
+    pub fn get_function_prototypes(self) -> Vec<FunctionChunk> {
+        self.functions
+    }
+}
+
+#[derive(Debug)]
 pub struct ResourceAlloc {
     pub reg_alloc: RegisterAlloc,
     pub const_alloc: ConstAlloc,
+    pub function_alloc: FunctionAlloc,
+    pub upvalue_alloc: UpValueAlloc,
+    pub parent: *mut ResourceAlloc,
 }
 
 impl ResourceAlloc {
@@ -118,6 +211,42 @@ impl ResourceAlloc {
         ResourceAlloc {
             reg_alloc: RegisterAlloc::new(),
             const_alloc: ConstAlloc::new(),
+            function_alloc: FunctionAlloc::new(),
+            upvalue_alloc: UpValueAlloc::new(),
+            parent: ptr::null_mut(),
         }
+    }
+
+    pub fn parent(mut self, p: *mut ResourceAlloc) -> ResourceAlloc {
+        self.parent = p;
+        self
+    }
+
+    pub unsafe fn propagate_upvalue(&mut self,
+                                    upvalue_name: &str,
+                                    final_pos: Usize,
+                                    depth: Usize)
+                                    -> Usize {
+        //  upvalue is already pushed into upvalue list
+        if let Some(pos) = self.upvalue_alloc.get(upvalue_name) {
+            return pos;
+        }
+
+        let mut current = self as *mut ResourceAlloc;
+        let mut parent = self.parent;
+        let mut upvalue_index = (*current).upvalue_alloc.push(upvalue_name, depth, final_pos);
+        // safe the immidiate parent upvalue position, for returning
+        let immidiate_upvalue_index = upvalue_index;
+        // excute when depth >= 2
+        for i in 1..depth {
+            //  alloc upvalue in parent, and get where upvalue stored
+            upvalue_index = (*parent).upvalue_alloc.push(upvalue_name, depth - i, final_pos);
+            //  use this value to update current upvalue list
+            (*current).upvalue_alloc.set_upper_index(upvalue_name, upvalue_index);
+            // move up
+            current = parent;
+            parent = (*parent).parent;
+        }
+        immidiate_upvalue_index
     }
 }
