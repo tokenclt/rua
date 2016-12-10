@@ -146,10 +146,7 @@ impl CodeGen {
                                                            const_pos);
                                     }
                                     Some((SymbolScope::Local, pos)) => {
-                                        CodeGen::emit_iABx(instructions,
-                                                           OpName::MOVE,
-                                                           pos,
-                                                           expr.1);
+                                        CodeGen::emit_iABx(instructions, OpName::MOVE, pos, expr.1);
                                     }
                                     Some((SymbolScope::UpValue(_), _)) => unimplemented!(),
                                 }
@@ -185,20 +182,24 @@ impl CodeGen {
             }
             Stat::Ret(ref exprlist) => {
                 // FIXME: reduce register use
-                let reg_list = try!(self.visit_exprlist(exprlist, res_alloc, instructions));
-                // allocate consecutive register for return
-                let start_register = res_alloc.reg_alloc.size() as u32;
-                for &(_, source_reg) in &reg_list {
-                    let ret_reg = res_alloc.reg_alloc.push(None);
-                    CodeGen::emit_iABx(instructions, OpName::MOVE, ret_reg, source_reg);
+                // first: allocate a chunk of conjective registers
+                let reg_list =
+                    (0..exprlist.len()).map(|_| res_alloc.reg_alloc.push(None)).collect::<Vec<_>>();
+                // if is void return, start_register is not needed
+                let ret_num = reg_list.len(); // save moved value
+                let start_register = if ret_num > 0 { reg_list[0] } else { 0 };
+                // second: visit each expr with expect return register
+                for (expr, reg) in exprlist.into_iter().zip(reg_list.into_iter()) {
+                    try!(self.visit_expr(expr, res_alloc, instructions, Some(reg)));
                 }
+
                 // return statement
                 // if B == 1, no expr returned
                 // if B >= 1 return R(start_register) .. R(start_register + B - 2)
                 CodeGen::emit_iABx(instructions,
                                    OpName::RETURN,
                                    start_register,
-                                   (reg_list.len() + 1) as u32);
+                                   (ret_num + 1) as u32);
                 Ok(Some(res_alloc.reg_alloc.size()))
             }
             _ => unimplemented!(),
@@ -209,31 +210,42 @@ impl CodeGen {
     fn visit_expr(&mut self,
                   expr: &Expr,
                   res_alloc: &mut ResourceAlloc,
-                  instructions: &mut Vec<OpMode>)
+                  instructions: &mut Vec<OpMode>,
+                  expect_reg: Option<u32>)
                   -> Result<(bool, Usize), CompileError> {
         match *expr {
             Expr::Num(num) => {
                 let const_pos = res_alloc.const_alloc.push(ConstType::Real(num));
-                let reg = res_alloc.reg_alloc.push(None);
+                let reg = if let Some(expect) = expect_reg {
+                    expect
+                } else {
+                    res_alloc.reg_alloc.push(None)
+                };
                 CodeGen::emit_iABx(instructions, OpName::LOADK, reg, const_pos);
                 Ok((true, reg))
             }
             Expr::BinOp(flag, ref left, ref right) => {
                 // use left register as result register
-                let (is_temp, left_reg) = try!(self.visit_expr(left, res_alloc, instructions));
-                let (_, right_reg) = try!(self.visit_expr(right, res_alloc, instructions));
+                // TODO: ignore left associative to generate optimized code
+                let (is_temp, left_reg) =
+                    try!(self.visit_expr(left, res_alloc, instructions, expect_reg));
+                let (_, right_reg) = try!(self.visit_expr(right, res_alloc, instructions, None));
                 let op = self.flag_to_op.get(&flag).unwrap().clone();
                 // destructive op only generate for temp register
                 if is_temp {
                     CodeGen::emit_iABC(instructions, op, left_reg, left_reg, right_reg);
                     Ok((true, left_reg))
                 } else {
-                    let reg = res_alloc.reg_alloc.push(None);
+                    let reg = if let Some(expect) = expect_reg {
+                        expect
+                    } else {
+                        res_alloc.reg_alloc.push(None)
+                    };
                     CodeGen::emit_iABC(instructions, op, reg, left_reg, right_reg);
                     Ok((true, reg))
                 }
             }
-            Expr::Var(ref var) => self.visit_var(var, res_alloc, instructions),
+            Expr::Var(ref var) => self.visit_var(var, res_alloc, instructions, expect_reg),
             Expr::FunctionDef((ref namelist, is_vararg), ref function_body) => {
                 self.symbol_table.initialize_scope();
                 //  child function prototype should be wrapped in another scope
@@ -243,7 +255,11 @@ impl CodeGen {
                 //  push function prototype in function list
                 let func_pos = res_alloc.function_alloc.push(function_prototype.prototype);
                 //  temporary register for function
-                let reg = res_alloc.reg_alloc.push(None);
+                let reg = if let Some(expect) = expect_reg {
+                    expect
+                } else {
+                    res_alloc.reg_alloc.push(None)
+                };
                 CodeGen::emit_iABx(instructions, OpName::CLOSURE, reg, func_pos);
                 //  generate virtual move instructions
                 //  helping vm to manage upvalue
@@ -271,7 +287,7 @@ impl CodeGen {
                       instructions: &mut Vec<OpMode>)
                       -> Result<Vec<(bool, u32)>, CompileError> {
         let reg_list = exprlist.into_iter()
-            .map(|expr| self.visit_expr(expr, res_alloc, instructions))
+            .map(|expr| self.visit_expr(expr, res_alloc, instructions, None))
             .filter(|r| r.is_ok())
             .map(|r| r.unwrap())
             .collect::<Vec<_>>();
@@ -286,7 +302,8 @@ impl CodeGen {
     fn visit_var(&mut self,
                  var: &Var,
                  res_alloc: &mut ResourceAlloc,
-                 instructions: &mut Vec<OpMode>)
+                 instructions: &mut Vec<OpMode>,
+                 expect_reg: Option<u32>)
                  -> Result<(bool, Usize), CompileError> {
         match *var {
             Var::Name(ref name) => {
@@ -295,14 +312,22 @@ impl CodeGen {
                 match scope {
                     SymbolScope::Global => {
                         let const_pos = res_alloc.const_alloc.push(ConstType::Str(name.clone()));
-                        let reg = res_alloc.reg_alloc.push(None);
+                        let reg = if let Some(expect) = expect_reg {
+                            expect
+                        } else {
+                            res_alloc.reg_alloc.push(None)
+                        };
                         CodeGen::emit_iABx(instructions, OpName::GETGLOBAL, reg, const_pos);
                         Ok((true, reg))
                     }
                     SymbolScope::UpValue(depth) => {
                         let immidiate_upvalue_pos =
                             unsafe { res_alloc.propagate_upvalue(name, pos, depth) };
-                        let reg = res_alloc.reg_alloc.push(None);
+                        let reg = if let Some(expect) = expect_reg {
+                            expect
+                        } else {
+                            res_alloc.reg_alloc.push(None)
+                        };
                         // todo: optimize, reduce register number
                         CodeGen::emit_iABx(instructions,
                                            OpName::GETUPVAL,
@@ -310,7 +335,19 @@ impl CodeGen {
                                            immidiate_upvalue_pos);
                         Ok((true, reg))
                     }
-                    SymbolScope::Local => Ok((false, pos)),
+                    SymbolScope::Local => {
+                        if let Some(expect) = expect_reg {
+                            if expect != pos {
+                                CodeGen::emit_iABx(instructions, OpName::MOVE, expect, pos);
+                                Ok((false, expect)) // caller-provided register is viewed as none temp
+                            } else {
+                                Ok((false, expect))
+                            }
+                        } else {
+                            // no expected register provided
+                            Ok((false, pos))
+                        }
+                    }
                 }
             }
         }
@@ -362,7 +399,7 @@ mod tests {
             local a = 2
             func = function()
                 local b = 3 
-                return a + b
+                return a + b, b + a
             end
         "))
             .unwrap();
