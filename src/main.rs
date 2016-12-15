@@ -4,8 +4,7 @@ mod parser;
 mod interpreter;
 mod compiler;
 
-//use compiler::tests::function_def;
-
+use compiler::tests;
 fn main() {
-    //function_def();
+    tests::function_call();
 }

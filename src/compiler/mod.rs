@@ -128,8 +128,6 @@ impl CodeGen {
             // could be global or local`
             Stat::Assign(ref varlist, ref exprlist) => {
                 // visit each expr, and get result register
-                // if error is throwed in visit_expr()
-                // collect will early stop
                 let reg_list = try!(self.visit_exprlist(exprlist, res_alloc, instructions));
                 if varlist.len() == reg_list.len() {
                     for (var, expr) in varlist.into_iter().zip(reg_list.into_iter()) {
@@ -181,7 +179,6 @@ impl CodeGen {
                 }
             }
             Stat::Ret(ref exprlist) => {
-                // FIXME: reduce register use
                 // first: allocate a chunk of conjective registers
                 let reg_list =
                     (0..exprlist.len()).map(|_| res_alloc.reg_alloc.push(None)).collect::<Vec<_>>();
@@ -192,7 +189,6 @@ impl CodeGen {
                 for (expr, reg) in exprlist.into_iter().zip(reg_list.into_iter()) {
                     try!(self.visit_expr(expr, res_alloc, instructions, Some(reg)));
                 }
-
                 // return statement
                 // if B == 1, no expr returned
                 // if B >= 1 return R(start_register) .. R(start_register + B - 2)
@@ -376,8 +372,8 @@ impl CodeGen {
     }
 }
 
-#[cfg(test)]
-mod tests {
+//#[cfg(test)]
+pub mod tests {
     use super::*;
     use parser::Parser;
     use std::str::Chars;
@@ -406,6 +402,20 @@ mod tests {
 
         let mut compiler = CodeGen::new();
         assert_eq!(compiler.compile(&ast), Ok(()));
+    }
+
+    //#[test]
+    pub fn function_call() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+            local a = 2
+            func = function(para)
+                return a + para, 0
+            end
+            local b = func(1)
+        ")).unwrap();
+        println!("{:?}", ast);
+        let mut compiler = CodeGen::new();
+        assert_eq!(compiler.compile(&ast), Ok(()) );
         println!("{:?}", compiler.root_function);
         panic!("boom");
     }

@@ -1,5 +1,5 @@
 use interpreter::{Variable, InterpretError};
-use parser::types::{Expr, Node, Var, Stat, Block};
+use parser::types::{Expr, Node, Stat, Var, Block};
 use lexer::tokens::FlagType;
 use compiler::symbol_table::ScopedSymbolTableBuilder;
 
@@ -56,9 +56,8 @@ impl Interpreter {
                 }
             }
             Expr::Var(ref var) => self.visit_var(var),
-            Expr::Str(_) => unimplemented!(),
-            Expr::Boole(_) => unimplemented!(),
-            Expr::FunctionDef(..) => unimplemented!(),
+            _ => unimplemented!(),
+
         }
     }
 
@@ -75,7 +74,7 @@ impl Interpreter {
 
     fn visit_block(&mut self, n: &Node) -> Result<(), InterpretError> {
         match *n {
-            Node::Block(Block{ref stats, ..}) => {
+            Node::Block(Block { ref stats, .. }) => {
                 for stat in stats {
                     try!(self.visit_stat(stat));
                 }
@@ -112,7 +111,7 @@ mod tests {
     use lexer::Lexer;
 
     #[test]
-    pub fn test() {
+    fn test() {
         let text = String::from("\
     --This a comment 
     a, number = 0, 1

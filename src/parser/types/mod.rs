@@ -11,6 +11,8 @@ pub enum Expr {
     UnaryOp(FlagType, Box<Expr>),
     // named paras and has_unnamed
     FunctionDef((Vec<Name>, bool), Box<Node>),
+    // evaluating the expr yields the name of function, args, is_vararg
+    FunctionCall(Box<Expr>, Vec<Box<Expr>>, bool)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,9 +40,20 @@ impl Block {
 
 pub type Name = String;
 
+// FIXME: remove excessive
 #[derive(Clone, Debug, PartialEq)]
 pub enum Var {
     Name(Name),
+}
+
+// if a prefixexp is ended by '(' ... ')', FuncCall
+// if ended by '[' Name ']', '.' Name, Name, Var
+// else other
+#[derive(Debug, PartialEq)]
+pub enum PrefixExp{
+    FuncCall,
+    Var,
+    Other,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -60,7 +60,7 @@ impl<'a, Tit> Parser<'a, Tit>
 impl<'a, Tit> Parser<'a, Tit>
     where Tit: iter::Iterator<Item = char> + Clone
 {
-    /// rule: factor: (Plus | Minus) factor | Integer | LParen expr RParen | Var
+    /// rule: factor: (Plus | Minus) factor | Integer | String| Boolean | LParen expr RParen | Var
     fn factor(&mut self) -> Result<Box<Expr>, ParserError> {
         if let Some(token) = self.peek_clone() {
             match token {
@@ -73,16 +73,8 @@ impl<'a, Tit> Parser<'a, Tit>
                     let node = try!(self.factor());
                     Ok(Box::new(Expr::UnaryOp(t, node)))
                 }
-                Token::Flag(FlagType::LParen) => {
-                    self.eat(FlagType::LParen).unwrap();
-                    let node = try!(self.expr());
-                    try!(self.eat(FlagType::RParen));
-                    Ok(node)
-                }
-                Token::Name(id) => {
-                    self.eat(FlagType::Name).unwrap();
-                    Ok(Box::new(Expr::Var(Var::Name(id))))
-                }
+                Token::Flag(FlagType::LParen) |
+                Token::Name(_) => self.prefixexp().map(|r| r.0), // dispose type info
                 Token::Str(s) => {
                     self.eat(FlagType::Str).unwrap();
                     Ok(Box::new(Expr::Str(s)))
@@ -110,7 +102,7 @@ impl<'a, Tit> Parser<'a, Tit>
             match token {
                 Token::Flag(FlagType::Mul) => {
                     self.eat(FlagType::Mul).unwrap(); // must succeed
-                    node = Box::new(Expr::BinOp(FlagType::Mul, node, try!(self.factor())));
+                    node = Box::new(Expr::BinOp(FlagType::Mul, node, self.factor()?));
                 }
                 Token::Flag(FlagType::Div) => {
                     self.eat(FlagType::Div).unwrap(); // must secceed
@@ -176,6 +168,74 @@ impl<'a, Tit> Parser<'a, Tit>
         Ok(node)
     }
 
+
+    /// rule: prefixexp ::= var | functioncall | '(' expr ')'
+    /// ret: (prefixexp, FuncCall or Var)
+    fn prefixexp(&mut self) -> Result<(Box<Expr>, PrefixExp), ParserError> {
+        // look forward (1)
+        let prefix = match self.peek_clone().unwrap() {
+            // '(' expr ')'
+            Token::Flag(FlagType::LParen) => {
+                self.eat(FlagType::LParen).unwrap();
+                let node = self.expr()?;
+                self.eat(FlagType::RParen)?;
+                (node, PrefixExp::Other)
+            }
+            // could be name or name + modifier
+            Token::Name(name) => {
+                self.eat(FlagType::Name).unwrap();
+                let node = Box::new(Expr::Var(Var::Name(name)));
+                self.name_complement(node)?
+            }
+            _ => panic!("Token won't be used by prefixexp"),
+        };
+        self.prefixexp_expand(prefix)
+    }
+
+    /// expend prefixexp with ':' '[' '.'
+    /// if can not expand
+    /// original prefix is returned (epsilon)
+    fn prefixexp_expand(&mut self,
+                        prefix: (Box<Expr>, PrefixExp))
+                        -> Result<(Box<Expr>, PrefixExp), ParserError> {
+        if let Some(token) = self.peek_clone() {
+            match token {
+                Token::Flag(FlagType::Colons) => unimplemented!(),
+                Token::Flag(FlagType::Dot) => unimplemented!(),
+                _ => Ok(prefix),
+            }
+        } else {
+            Ok(prefix)
+        }
+    }
+
+    /// try parse complement form (e.g. ':' , '[')
+    /// and combine complement form with prefix
+    /// if no complement is found, original_prefix is returned
+    fn name_complement(&mut self,
+                       prefix: Box<Expr>)
+                       -> Result<(Box<Expr>, PrefixExp), ParserError> {
+        if let Some(token) = self.peek_clone() {
+            match token {
+                // Name args
+                Token::Flag(FlagType::LParen) => {
+                    self.eat(FlagType::LParen).unwrap();
+                    let (args, is_vararg) = self.arglist()?;
+                    try!(self.eat(FlagType::RParen));
+                    let node = Box::new(Expr::FunctionCall(prefix, args, is_vararg));
+                    Ok((node, PrefixExp::FuncCall))
+                }
+                // Name ':' Name args
+                Token::Flag(FlagType::Colons) => unimplemented!(),
+                Token::Flag(FlagType::Dot) => unimplemented!(),
+                // no expansion performed
+                _ => Ok((prefix, PrefixExp::Var)),
+            }
+        } else {
+            Ok((prefix, PrefixExp::Var))
+        }
+    }
+
     fn expr(&mut self) -> Result<Box<Expr>, ParserError> {
         match self.peek_clone() {
             Some(Token::Flag(FlagType::Function)) => self.function_def().map(|e| Box::new(e)),
@@ -201,8 +261,14 @@ impl<'a, Tit> Parser<'a, Tit>
     /// rule: Block: {Stat} [Retstat]
     fn block(&mut self) -> Result<Box<Node>, ParserError> {
         let mut stats: Vec<Box<Stat>> = vec![];
-        while let Ok(stat) = self.stat() {
-            stats.push(stat);
+        loop {
+            let stat = self.stat();
+            println!("{:?}", stat);
+            match stat {
+                Ok(s) => stats.push(s),
+                Err(ParserError::ExpectationUnmeet) => break,
+                Err(err) => return Err(err),
+            }
         }
         let ret = self.retstat().ok();
         Ok(Box::new(Node::Block(Block::new(stats, ret))))
@@ -214,8 +280,8 @@ impl<'a, Tit> Parser<'a, Tit>
         loop {
             let attempt = if let Some(token) = self.peek_clone() {
                 match token {
-                    Token::Flag(flag) if flag == FlagType::Colons || flag == FlagType::EOF => {
-                        self.eat(flag).unwrap();
+                    Token::Flag(FlagType::Colons) => {
+                        self.eat(FlagType::Colons).unwrap();
                         Ok(Box::new(Stat::Empty))
                     }
                     Token::Flag(FlagType::Local) => self.assign_local(),
@@ -225,7 +291,7 @@ impl<'a, Tit> Parser<'a, Tit>
                         // try parse by rule: assign list of expr to list of name
                         match self.assign() {
                             Ok(stat) => Ok(stat),
-                            // if failed , parse by rule: assign function 
+                            // if failed , parse by rule: assign function
                             Err(ParserError::ExpectationUnmeet) => unimplemented!(),
                             e @ _ => e,
                         }
@@ -235,9 +301,11 @@ impl<'a, Tit> Parser<'a, Tit>
                         self.eat(FlagType::Break).unwrap();
                         Ok(Box::new(Stat::Break))
                     }
-                    Token::Flag(FlagType::Return) => self.retstat().map(|exprs| Box::new(Stat::Ret(exprs))),
+                    // do not handle retstat, leave it to block
+                    Token::Flag(FlagType::Return) => Err(ParserError::ExpectationUnmeet), 
                     //  return an error , this will stop parsing block
                     Token::Flag(FlagType::End) => Err(ParserError::ExpectationUnmeet),
+                    Token::Flag(FlagType::EOF) => Err(ParserError::ExpectationUnmeet),
                     _ => unimplemented!(),
                 }
             } else {
@@ -336,6 +404,42 @@ impl<'a, Tit> Parser<'a, Tit>
         Ok(list)
     }
 
+    /// args for a function call
+    /// could end with threedot
+    fn arglist(&mut self) -> Result<(Vec<Box<Expr>>, bool), ParserError> {
+        let (mut list, mut var_arg) = match self.expr() {
+            Ok(expr) => (vec![expr], false),
+            Err(_) => {
+                if let Some(Token::Flag(FlagType::ThreeDot)) = self.peek_clone() {
+                    self.eat(FlagType::ThreeDot).unwrap();
+                    (vec![], true)
+                } else {
+                    (vec![], false)
+                }
+            }
+        };
+        while let Some(token) = self.peek_clone() {
+            match token {
+                Token::Flag(FlagType::Comma) => {
+                    self.eat(FlagType::Comma).unwrap();
+                    match self.expr() {
+                        Ok(expr) => list.push(expr),
+                        Err(_) => {
+                            if let Some(Token::Flag(FlagType::ThreeDot)) = self.peek_clone() {
+                                self.eat(FlagType::ThreeDot).unwrap();
+                                var_arg = true;
+                            } else {
+                                return Err(ParserError::SyntaxError);
+                            }
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        Ok((list, var_arg))
+    }
+
     /// rule: exprlist: Expr { Comma Expr}
     fn exprlist(&mut self) -> Result<Vec<Box<Expr>>, ParserError> {
         let mut expr = try!(self.expr());
@@ -375,7 +479,7 @@ impl<'a, Tit> Parser<'a, Tit>
                     *e = Some(Box::new(Node::Block(Block::new(vec![Box::from_raw(sub_clause)],
                                                               None))));
                 } else {
-                    panic!("Should not be refute");
+                    panic!("Should not refute");
                 }
                 bottom_clause = sub_clause;
             }
@@ -386,7 +490,7 @@ impl<'a, Tit> Parser<'a, Tit>
                 if let Stat::IfElse(_, _, ref mut e) = *bottom_clause {
                     *e = Some(block);
                 } else {
-                    panic!("Should not be refute");
+                    panic!("Should not refute");
                 }
             }
             if let Err(_) = self.eat(FlagType::End) {
@@ -432,10 +536,19 @@ impl<'a, Tit> Parser<'a, Tit>
     }
     /// rule: Namelist [ , ...]
     fn parlist(&mut self) -> Result<(Vec<Name>, bool), ParserError> {
-        // can not use namelist,
-        // three dot exist
-        let mut list = vec![try!(self.name())];
-        let mut multiret = false;
+        // can not use namelist, can not parse three dot
+        let (mut list, mut multiret) = match self.name() {
+            Ok(name) => (vec![name], false),
+            // (...)
+            Err(_) => {
+                if let Some(Token::Flag(FlagType::ThreeDot)) = self.peek_clone() {
+                    self.eat(FlagType::ThreeDot).unwrap();
+                    (vec![], true)
+                } else {
+                    (vec![], false)
+                }
+            }
+        };
         while let Some(token) = self.peek_clone() {
             match token {
                 Token::Flag(FlagType::Comma) => {
