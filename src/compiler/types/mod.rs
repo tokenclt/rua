@@ -9,6 +9,40 @@ pub enum ConstType {
     Str(String),
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Expect{
+    Reg(u32),
+    Num(usize),
+}
+
+pub fn extract_expect_reg(ex: Option<Expect>) -> Result<Option<u32>, CompileError>{
+    match ex {
+        Some(Expect::Reg(reg)) => Ok(Some(reg)),
+        Some(_) => Err(CompileError::SyntexError),
+        None => Ok(None)
+    }
+} 
+
+pub fn extract_expect_num(ex: Option<Expect>) -> Result<usize, CompileError> {
+    match ex {
+        Some(Expect::Num(num)) => Ok(num),
+        _ => Err(CompileError::SyntexError),
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum RetExpect{
+    Num(u32),
+    Indeterminate,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum CompileError {
+    SyntexError,
+    InconsistentRet,
+    UndefinedSymbol,
+}
+
 #[derive(Debug)]
 pub struct FunctionChunk {
     pub upvalue_num: Usize,

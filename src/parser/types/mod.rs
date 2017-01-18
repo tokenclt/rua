@@ -40,10 +40,13 @@ impl Block {
 
 pub type Name = String;
 
-// FIXME: remove excessive
 #[derive(Clone, Debug, PartialEq)]
 pub enum Var {
+    /// serve as recursion base
     Name(Name),
+    PrefixExp(Box<Expr>),
+    /// pass register position directly
+    Reg(u32),
 }
 
 // if a prefixexp is ended by '(' ... ')', FuncCall

@@ -263,7 +263,7 @@ impl<'a, Tit> Parser<'a, Tit>
         let mut stats: Vec<Box<Stat>> = vec![];
         loop {
             let stat = self.stat();
-            println!("{:?}", stat);
+            // println!("{:?}", stat);
             match stat {
                 Ok(s) => stats.push(s),
                 Err(ParserError::ExpectationUnmeet) => break,
@@ -359,11 +359,21 @@ impl<'a, Tit> Parser<'a, Tit>
 
     /// rule: var: Name | PrefixExpr |
     fn var(&mut self) -> Result<Var, ParserError> {
-        match self.peek_clone() {
-            Some(Token::Name(_)) => self.name().map(|id| Var::Name(id)),
-            _ => unimplemented!(),
+        //FIXME: Name[''] ?
+        if let Some(Token::Name(name)) = self.peek_clone() {
+            self.eat(FlagType::Name).unwrap();
+            Ok(Var::Name(name))
+        } else {
+            self.prefixexp().and_then(|(expr, cat)| {
+                if cat == PrefixExp::Var {
+                    Ok(Var::PrefixExp(expr))
+                } else {
+                    Err(ParserError::SyntaxError)
+                }
+            })
         }
     }
+
     /// rule: varlist Name { Comma Name}
     fn varlist(&mut self) -> Result<Vec<Var>, ParserError> {
         let mut var = try!(self.var());

@@ -12,13 +12,6 @@ pub mod resource_allocator;
 pub mod opcodes;
 pub mod types;
 
-#[derive(Debug, PartialEq)]
-pub enum CompileError {
-    SyntexError,
-    InconsistentRet,
-    UndefinedSymbol,
-}
-
 #[derive(Debug)]
 pub struct CodeGen {
     symbol_table: ScopedSymbolTableBuilder,
@@ -99,20 +92,16 @@ impl CodeGen {
                    node: &Node,
                    res_alloc: &mut ResourceAlloc,
                    instructions: &mut Vec<OpMode>)
-                   -> Result<(Option<u32>), CompileError> {
+                   -> Result<(), CompileError> {
         if let Node::Block(Block { ref stats, ref ret }) = *node {
-            let mut ret_num = None;
             for stat in stats {
-                let stat_result = try!(self.visit_stat(stat, res_alloc, instructions));
-                if ret_num == None {
-                    ret_num = stat_result;
-                } else {
-                    if ret_num != stat_result {
-                        return Err(CompileError::InconsistentRet);
-                    }
-                }
+                self.visit_stat(stat, res_alloc, instructions)?;
             }
-            Ok(ret_num)
+            // if ret statement exists
+            if let &Some(ref ret_exprs) = ret {
+                self.visit_stat(&Stat::Ret(ret_exprs.clone()), res_alloc, instructions)?;
+            }
+            Ok(())
         } else {
             panic!("Block should be ensured by parser");
         }
@@ -123,39 +112,42 @@ impl CodeGen {
                   stat: &Stat,
                   res_alloc: &mut ResourceAlloc,
                   instructions: &mut Vec<OpMode>)
-                  -> Result<Option<u32>, CompileError> {
+                  -> Result<(), CompileError> {
         match *stat {
             // could be global or local`
             Stat::Assign(ref varlist, ref exprlist) => {
                 // visit each expr, and get result register
-                let reg_list = try!(self.visit_exprlist(exprlist, res_alloc, instructions));
-                if varlist.len() == reg_list.len() {
-                    for (var, expr) in varlist.into_iter().zip(reg_list.into_iter()) {
-                        match *var {
-                            Var::Name(ref name) => {
-                                // lookup , confirm if symbol is already defined
-                                match self.symbol_table.lookup(name) {
-                                    Some((SymbolScope::Global, _)) |
-                                    None => {
-                                        let const_pos = self.prepare_global_value(name, res_alloc); /* add name to const list and define global symbol */
-                                        CodeGen::emit_iABx(instructions,
-                                                           OpName::SETGLOBAL,
-                                                           expr.1, // only need reg pos
-                                                           const_pos);
-                                    }
-                                    Some((SymbolScope::Local, pos)) => {
-                                        CodeGen::emit_iABx(instructions, OpName::MOVE, pos, expr.1);
-                                    }
-                                    Some((SymbolScope::UpValue(_), _)) => unimplemented!(),
+                //       trim varlist and exprlist into equal length and
+                //       return new varlist and exprlist
+                //       this method will generate load nill instruction
+                //       and have a special handler for functioncall
+                //       loadnill should be performed at the end
+                let (varlist, exprlist) =
+                    self.adjust_list(varlist, exprlist, res_alloc, instructions)?;
+                let reg_list = try!(self.visit_exprlist(&exprlist, res_alloc, instructions));
+                for (var, expr) in varlist.into_iter().zip(reg_list.into_iter()) {
+                    match var {
+                        Var::Name(ref name) => {
+                            // lookup , confirm if symbol is already defined
+                            match self.symbol_table.lookup(name) {
+                                Some((SymbolScope::Global, _)) |
+                                None => {
+                                    let const_pos = self.prepare_global_value(name, res_alloc); /* add name to const list and define global symbol */
+                                    CodeGen::emit_iABx(instructions,
+                                                       OpName::SETGLOBAL,
+                                                       expr.1, // only need reg pos
+                                                       const_pos);
                                 }
+                                Some((SymbolScope::Local, pos)) => {
+                                    CodeGen::emit_iABx(instructions, OpName::MOVE, pos, expr.1);
+                                }
+                                Some((SymbolScope::UpValue(_), _)) => unimplemented!(),
                             }
                         }
+                        _ => unimplemented!(),
                     }
-                    Ok(None)
-                } else {
-                    // loadnil and omit
-                    unimplemented!()
                 }
+                Ok(())
             }
             // bind to new local
             Stat::AssignLocal(ref namelist, ref exprlist) => {
@@ -172,7 +164,7 @@ impl CodeGen {
                             CodeGen::emit_iABx(instructions, OpName::MOVE, pos, expr_reg);
                         }
                     }
-                    Ok(None)
+                    Ok(())
                 } else {
                     // loadnil, omit
                     unimplemented!()
@@ -187,7 +179,7 @@ impl CodeGen {
                 let start_register = if ret_num > 0 { reg_list[0] } else { 0 };
                 // second: visit each expr with expect return register
                 for (expr, reg) in exprlist.into_iter().zip(reg_list.into_iter()) {
-                    try!(self.visit_expr(expr, res_alloc, instructions, Some(reg)));
+                    try!(self.visit_expr(expr, res_alloc, instructions, Some(Expect::Reg(reg))));
                 }
                 // return statement
                 // if B == 1, no expr returned
@@ -196,23 +188,24 @@ impl CodeGen {
                                    OpName::RETURN,
                                    start_register,
                                    (ret_num + 1) as u32);
-                Ok(Some(res_alloc.reg_alloc.size()))
+                Ok(())
             }
             _ => unimplemented!(),
         }
     }
 
     /// ret: (is_temp, a register hold the value)
+    /// expect: where the result should be stored or how many result should be returned
     fn visit_expr(&mut self,
                   expr: &Expr,
                   res_alloc: &mut ResourceAlloc,
                   instructions: &mut Vec<OpMode>,
-                  expect_reg: Option<u32>)
+                  expect: Option<Expect>)
                   -> Result<(bool, Usize), CompileError> {
         match *expr {
             Expr::Num(num) => {
                 let const_pos = res_alloc.const_alloc.push(ConstType::Real(num));
-                let reg = if let Some(expect) = expect_reg {
+                let reg = if let Some(expect) = extract_expect_reg(expect)? {
                     expect
                 } else {
                     res_alloc.reg_alloc.push(None)
@@ -224,7 +217,7 @@ impl CodeGen {
                 // use left register as result register
                 // TODO: ignore left associative to generate optimized code
                 let (is_temp, left_reg) =
-                    try!(self.visit_expr(left, res_alloc, instructions, expect_reg));
+                    try!(self.visit_expr(left, res_alloc, instructions, expect));
                 let (_, right_reg) = try!(self.visit_expr(right, res_alloc, instructions, None));
                 let op = self.flag_to_op.get(&flag).unwrap().clone();
                 // destructive op only generate for temp register
@@ -232,7 +225,7 @@ impl CodeGen {
                     CodeGen::emit_iABC(instructions, op, left_reg, left_reg, right_reg);
                     Ok((true, left_reg))
                 } else {
-                    let reg = if let Some(expect) = expect_reg {
+                    let reg = if let Some(expect) = extract_expect_reg(expect)? {
                         expect
                     } else {
                         res_alloc.reg_alloc.push(None)
@@ -241,7 +234,9 @@ impl CodeGen {
                     Ok((true, reg))
                 }
             }
-            Expr::Var(ref var) => self.visit_var(var, res_alloc, instructions, expect_reg),
+            Expr::Var(ref var) => {
+                self.visit_var(var, res_alloc, instructions, extract_expect_reg(expect)?)
+            }
             Expr::FunctionDef((ref namelist, is_vararg), ref function_body) => {
                 self.symbol_table.initialize_scope();
                 //  child function prototype should be wrapped in another scope
@@ -251,7 +246,7 @@ impl CodeGen {
                 //  push function prototype in function list
                 let func_pos = res_alloc.function_alloc.push(function_prototype.prototype);
                 //  temporary register for function
-                let reg = if let Some(expect) = expect_reg {
+                let reg = if let Some(expect) = extract_expect_reg(expect)? {
                     expect
                 } else {
                     res_alloc.reg_alloc.push(None)
@@ -272,6 +267,15 @@ impl CodeGen {
                     }
                 }
                 Ok((true, reg))
+            }
+            Expr::FunctionCall(ref expr, ref args, is_vararg) => {
+                let central_reg = self.visit_function_call(expr,
+                                         args,
+                                         is_vararg,
+                                         RetExpect::Num(1),
+                                         res_alloc,
+                                         instructions)?;
+                Ok((true, central_reg))
             }
             _ => unimplemented!(),
         }
@@ -346,6 +350,117 @@ impl CodeGen {
                     }
                 }
             }
+            Var::Reg(reg) => Ok((true, reg)),
+            Var::PrefixExp(ref expr) => unimplemented!(),
+        }
+    }
+
+    fn visit_function_call(&mut self,
+                           expr: &Expr,
+                           args: &Vec<Box<Expr>>,
+                           is_vararg: bool,
+                           expect_ret: RetExpect,
+                           res_alloc: &mut ResourceAlloc,
+                           instructions: &mut Vec<OpMode>)
+                           -> Result<u32, CompileError> {
+        // todo: vararg
+        // get function name
+        let func_pos = res_alloc.reg_alloc.push(None);
+        self.visit_expr(expr, res_alloc, instructions, Some(Expect::Reg(func_pos)))?;
+        let ret_field: u32;
+        let arg_field: u32;
+
+        match expect_ret {
+            RetExpect::Num(ret_num) => {
+                // allocate register
+                for _ in 0..ret_num {
+                    res_alloc.reg_alloc.push(None);
+                }
+                ret_field = ret_num + 1;
+            }
+            RetExpect::Indeterminate => {
+                ret_field = 0;
+            }
+        }
+
+        // in case of underflow
+        if args.len() == 0 {
+            arg_field = 1;
+        } else {
+            let mut args_reg = func_pos + 1;
+            if let Expr::FunctionCall(ref expr, ref args, is_vararg) = *args[args.len() - 1] {
+                for i in 0..(args.len() - 1) {
+                    // make sure the args are continous
+                    self.visit_expr(&args[i],
+                                    res_alloc,
+                                    instructions,
+                                    Some(Expect::Reg(args_reg)))?;
+                    args_reg += 1;
+                }
+                self.visit_function_call(expr,
+                                         args,
+                                         is_vararg,
+                                         RetExpect::Indeterminate,
+                                         res_alloc,
+                                         instructions)?;
+                arg_field = 0; // Indeterminate arg number
+            } else {
+                for expr in args {
+                    self.visit_expr(expr, res_alloc, instructions, Some(Expect::Reg(args_reg)))?;
+                    args_reg += 1;
+                }
+                arg_field = args.len() as u32 + 1;
+            }
+        }
+        CodeGen::emit_iABC(instructions, OpName::CALL, func_pos, arg_field, ret_field);
+        Ok(func_pos)
+    }
+
+    fn adjust_list(&mut self,
+                 varlist: &Vec<Var>,
+                 exprlist: &Vec<Box<Expr>>,
+                 res_alloc: &mut ResourceAlloc,
+                 instructions: &mut Vec<OpMode>)
+                 -> Result<(Vec<Var>, Vec<Box<Expr>>), CompileError> {
+        // balanced
+        if varlist.len() == exprlist.len() {
+            return Ok((varlist.clone(), exprlist.clone()));
+        }
+        // imbalanced & trancate
+        else if varlist.len() < exprlist.len() {
+            // discard resisual expressions
+            let remain = varlist.len();
+            let mut truncated = exprlist.clone();
+            truncated.truncate(remain);
+            return Ok((varlist.clone(), truncated));
+        }
+        // imbalanced & one function call
+        else {
+            if exprlist.len() == 1 {
+                if let Expr::FunctionCall(ref expr, ref args, is_vararg) = *exprlist[0] {
+                    let central_reg = self.visit_function_call(expr,
+                                             args,
+                                             is_vararg,
+                                             RetExpect::Num(varlist.len() as u32),
+                                             res_alloc,
+                                             instructions)?;
+                    let expr_regs = (central_reg..(central_reg + varlist.len() as u32))
+                        .map(|reg| Box::new(Expr::Var(Var::Reg(reg))))
+                        .collect();
+                    return Ok((varlist.clone(), expr_regs));
+                }
+            }
+            // imbalanced & loadnill
+            let num = (varlist.len() - exprlist.len()) as u32;
+            let start_reg = res_alloc.reg_alloc.push(None);
+            let mut extended = exprlist.clone();
+            extended.push(Box::new(Expr::Var(Var::Reg(start_reg))));
+            for _ in 1..num {
+                let reg = res_alloc.reg_alloc.push(None);
+                extended.push(Box::new(Expr::Var(Var::Reg(reg))));
+            }
+            CodeGen::emit_iABx(instructions, OpName::LOADNIL, start_reg, num - 1);
+            return Ok((varlist.clone(), extended));
         }
     }
 }
@@ -372,7 +487,7 @@ impl CodeGen {
     }
 }
 
-//#[cfg(test)]
+// #[cfg(test)]
 pub mod tests {
     use super::*;
     use parser::Parser;
@@ -404,7 +519,7 @@ pub mod tests {
         assert_eq!(compiler.compile(&ast), Ok(()));
     }
 
-    //#[test]
+    #[test]
     pub fn function_call() {
         let ast = Parser::<Chars>::ast_from_text(&String::from("\
             local a = 2
@@ -412,11 +527,9 @@ pub mod tests {
                 return a + para, 0
             end
             local b = func(1)
-        ")).unwrap();
-        println!("{:?}", ast);
+        "))
+            .unwrap();
         let mut compiler = CodeGen::new();
-        assert_eq!(compiler.compile(&ast), Ok(()) );
-        println!("{:?}", compiler.root_function);
-        panic!("boom");
+        assert_eq!(compiler.compile(&ast), Ok(()));
     }
 }

@@ -69,6 +69,7 @@ impl Interpreter {
                     None => Err(InterpretError::UndefinedVariable),
                 }
             }
+            _ => unimplemented!(),
         }
     }
 
@@ -87,10 +88,14 @@ impl Interpreter {
     fn visit_stat(&mut self, stat: &Stat) -> Result<(), InterpretError> {
         match *stat {
             Stat::Assign(ref varlist, ref exprlist) => {
-                for (&Var::Name(ref var), expr) in varlist.into_iter().zip(exprlist.into_iter()) {
-                    let result = try!(self.visit_expr(expr));
-                    let v = self.global_variables.entry(var.clone()).or_insert(result);
-                    *v = result;
+                for (var, expr) in varlist.into_iter().zip(exprlist.into_iter()) {
+                    if let &Var::Name(ref name) = var {
+                        let result = try!(self.visit_expr(expr));
+                        let v = self.global_variables.entry(name.clone()).or_insert(result);
+                        *v = result;
+                    } else {
+                        panic!("Do not support non Name as Var");
+                    }
                 }
                 Ok(())
             }

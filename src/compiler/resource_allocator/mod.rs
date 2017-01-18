@@ -8,6 +8,8 @@ pub struct RegisterAlloc {
     counter: u32,
 }
 
+// TODO: add register pool for nameless varibles
+//       so that temporary register can be reused
 impl RegisterAlloc {
     pub fn new() -> RegisterAlloc {
         RegisterAlloc {
