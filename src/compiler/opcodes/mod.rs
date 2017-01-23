@@ -30,7 +30,9 @@ pub fn mask_0(len: u32, posi: u32) -> u32 {
 pub enum OpMode {
     iABC(OpName, u32, u32, u32),
     iABx(OpName, u32, u32),
-    iAsBx(OpName, u32, u32),
+    iAsBx(OpName, u32, i32),
+    /// for jmp instruction
+    Label(i32),
 }
 
 #[allow(dead_code)]

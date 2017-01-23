@@ -1,5 +1,7 @@
 use std::mem::transmute;
+use std::collections::HashMap;
 use super::opcodes::OpMode;
+use super::opcodes::OpName;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ConstType {
@@ -10,18 +12,18 @@ pub enum ConstType {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Expect{
+pub enum Expect {
     Reg(u32),
     Num(usize),
 }
 
-pub fn extract_expect_reg(ex: Option<Expect>) -> Result<Option<u32>, CompileError>{
+pub fn extract_expect_reg(ex: Option<Expect>) -> Result<Option<u32>, CompileError> {
     match ex {
         Some(Expect::Reg(reg)) => Ok(Some(reg)),
         Some(_) => Err(CompileError::SyntexError),
-        None => Ok(None)
+        None => Ok(None),
     }
-} 
+}
 
 pub fn extract_expect_num(ex: Option<Expect>) -> Result<usize, CompileError> {
     match ex {
@@ -31,7 +33,7 @@ pub fn extract_expect_num(ex: Option<Expect>) -> Result<usize, CompileError> {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum RetExpect{
+pub enum RetExpect {
     Num(u32),
     Indeterminate,
 }
@@ -87,11 +89,53 @@ impl FunctionPrototype {
     }
 }
 
+pub type Label = i32;
+
+pub trait RemoveLabel {
+    fn remove_label(&self) -> Vec<OpMode>;
+}
+
+impl RemoveLabel for Vec<OpMode> {
+    fn remove_label(&self) -> Vec<OpMode> {
+        // pass one: remove label and build index
+        let mut label_removed = vec![];
+        let mut index = HashMap::new();
+        let mut pos_counter: i32 = 0;
+        for ins in self {
+            match ins {
+                &OpMode::Label(label) => {
+                    index.insert(label, pos_counter);
+                }
+                _ => {
+                    label_removed.push(ins);
+                    pos_counter += 1;
+                }
+            }
+        }
+        // pass two: replace label with number
+        let mut replaced = vec![];
+        for (pos, ins) in label_removed.iter().enumerate() {
+            match *ins {
+                &OpMode::iAsBx(OpName::JMP, _, ref label) => {
+                    // TODO: negative jmp
+                    let num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
+                    if num != 0 {
+                        replaced.push(OpMode::iAsBx(OpName::JMP, 0, num));
+                    }
+                }
+                _ => replaced.push((*ins).clone()),
+            }
+        }
+        replaced
+    }
+}
+
 pub trait ToBytecode {
     fn to_bytecode(&self) -> Vec<u32>;
 }
 
 impl ToBytecode for f64 {
+    // FIXME:f64 to bytecode
     fn to_bytecode(&self) -> Vec<u32> {
         let bitpattern = unsafe { transmute::<f64, u64>(*self) };
         let left = (bitpattern >> 32) as u32;

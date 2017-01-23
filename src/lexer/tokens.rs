@@ -59,7 +59,7 @@ pub enum FlagType {
     GREATER,
     AND,
     OR,
-
+    Not,
     Dot,
     ThreeDot,
 
@@ -90,6 +90,7 @@ pub fn get_keyword_table() -> HashMap<String, FlagType> {
         "if" => FlagType::If,
         "and" => FlagType::AND,
         "or" => FlagType::OR,
+        "not" => FlagType::Not,
         "then" => FlagType::Then,
         "else" => FlagType::Else,
         "elseif" => FlagType::Elseif,

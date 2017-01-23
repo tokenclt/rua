@@ -60,7 +60,7 @@ impl<'a, Tit> Parser<'a, Tit>
 impl<'a, Tit> Parser<'a, Tit>
     where Tit: iter::Iterator<Item = char> + Clone
 {
-    /// rule: factor: (Plus | Minus) factor | Integer | String| Boolean | LParen expr RParen | Var
+    /// rule: factor: (Plus | Minus | Not) factor | Integer | String| Boolean | LParen expr RParen | Var
     fn factor(&mut self) -> Result<Box<Expr>, ParserError> {
         if let Some(token) = self.peek_clone() {
             match token {
@@ -68,7 +68,8 @@ impl<'a, Tit> Parser<'a, Tit>
                     self.eat(FlagType::Integer).unwrap();
                     Ok(Box::new(Expr::Num(n)))
                 }
-                Token::Flag(t) if t == FlagType::Plus || t == FlagType::Minus => {
+                Token::Flag(t) if t == FlagType::Plus || t == FlagType::Minus ||
+                                  t == FlagType::Not => {
                     self.eat(t).unwrap();
                     let node = try!(self.factor());
                     Ok(Box::new(Expr::UnaryOp(t, node)))
@@ -136,13 +137,14 @@ impl<'a, Tit> Parser<'a, Tit>
     /// rule: cmp: Disj [ ( EQ | NEQ ) Disj]
     fn cmp(&mut self) -> Result<Box<Expr>, ParserError> {
         let mut node = try!(self.logical_term());
-        if let Some(Token::Flag(flag)) = self.peek_clone() {
+        while let Some(Token::Flag(flag)) = self.peek_clone() {
             match flag {
+                FlagType::LESS | FlagType::LEQ | FlagType::GREATER | FlagType::GEQ |
                 FlagType::EQ | FlagType::NEQ => {
                     self.eat(flag).unwrap();
                     node = Box::new(Expr::BinOp(flag, node, try!(self.logical_term())));
                 }
-                _ => {}
+                _ => break,
             }
         }
         Ok(node)
@@ -359,7 +361,7 @@ impl<'a, Tit> Parser<'a, Tit>
 
     /// rule: var: Name | PrefixExpr |
     fn var(&mut self) -> Result<Var, ParserError> {
-        //FIXME: Name[''] ?
+        // FIXME: Name[''] ?
         if let Some(Token::Name(name)) = self.peek_clone() {
             self.eat(FlagType::Name).unwrap();
             Ok(Var::Name(name))

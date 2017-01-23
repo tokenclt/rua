@@ -66,6 +66,8 @@ impl CodeGen {
         }
         //  visit body instuctions
         try!(self.visit_block(node, &mut res_alloc, &mut instructions));
+        // add a return, may be redundant
+        CodeGen::emit_iABx(&mut instructions, OpName::RETURN, 0, 1);
         // number of upvalues
         func_chunk.upvalue_num = res_alloc.upvalue_alloc.size() as Usize;
         // number of parameters
@@ -151,24 +153,21 @@ impl CodeGen {
             }
             // bind to new local
             Stat::AssignLocal(ref namelist, ref exprlist) => {
-                let reg_list = try!(self.visit_exprlist(exprlist, res_alloc, instructions));
-                if namelist.len() == reg_list.len() {
-                    for (name, (is_temp, expr_reg)) in namelist.into_iter()
-                        .zip(reg_list.into_iter()) {
-                        if is_temp {
-                            res_alloc.reg_alloc.push_set(name, expr_reg);
-                            self.symbol_table.define_local(name, expr_reg);
-                        } else {
-                            let pos = res_alloc.reg_alloc.push(Some(name));
-                            self.symbol_table.define_local(name, pos);
-                            CodeGen::emit_iABx(instructions, OpName::MOVE, pos, expr_reg);
-                        }
+                let (namelist, exprlist) =
+                    self.adjust_list(namelist, exprlist, res_alloc, instructions)?;
+                let reg_list = try!(self.visit_exprlist(&exprlist, res_alloc, instructions));
+                for (ref name, (is_temp, expr_reg)) in namelist.into_iter()
+                    .zip(reg_list.into_iter()) {
+                    if is_temp {
+                        res_alloc.reg_alloc.push_set(name, expr_reg);
+                        self.symbol_table.define_local(name, expr_reg);
+                    } else {
+                        let pos = res_alloc.reg_alloc.push(Some(name));
+                        self.symbol_table.define_local(name, pos);
+                        CodeGen::emit_iABx(instructions, OpName::MOVE, pos, expr_reg);
                     }
-                    Ok(())
-                } else {
-                    // loadnil, omit
-                    unimplemented!()
                 }
+                Ok(())
             }
             Stat::Ret(ref exprlist) => {
                 // first: allocate a chunk of conjective registers
@@ -213,25 +212,42 @@ impl CodeGen {
                 CodeGen::emit_iABx(instructions, OpName::LOADK, reg, const_pos);
                 Ok((true, reg))
             }
+            Expr::Boole(value) => {
+                let bit = if value { 1 } else { 0 };
+                let reg = if let Some(expect) = extract_expect_reg(expect)? {
+                    expect
+                } else {
+                    res_alloc.reg_alloc.push(None)
+                };
+                CodeGen::emit_iABC(instructions, OpName::LOADBOOL, reg, bit, 0);
+                Ok((true, reg))
+            }
             Expr::BinOp(flag, ref left, ref right) => {
                 // use left register as result register
                 // TODO: ignore left associative to generate optimized code
-                let (is_temp, left_reg) =
-                    try!(self.visit_expr(left, res_alloc, instructions, expect));
-                let (_, right_reg) = try!(self.visit_expr(right, res_alloc, instructions, None));
-                let op = self.flag_to_op.get(&flag).unwrap().clone();
-                // destructive op only generate for temp register
-                if is_temp {
-                    CodeGen::emit_iABC(instructions, op, left_reg, left_reg, right_reg);
-                    Ok((true, left_reg))
-                } else {
-                    let reg = if let Some(expect) = extract_expect_reg(expect)? {
-                        expect
-                    } else {
-                        res_alloc.reg_alloc.push(None)
-                    };
-                    CodeGen::emit_iABC(instructions, op, reg, left_reg, right_reg);
-                    Ok((true, reg))
+                match flag {
+                    FlagType::Plus | FlagType::Minus | FlagType::Mul | FlagType::Div => {
+                        let (is_temp, left_reg) =
+                            try!(self.visit_expr(left, res_alloc, instructions, None));
+                        let (_, right_reg) =
+                            try!(self.visit_expr(right, res_alloc, instructions, None));
+                        let op = self.flag_to_op.get(&flag).expect("BinOp not defined").clone();
+                        // destructive op only generate for temp register
+                        let (result_is_temp, result_reg) = if let Some(expect) =
+                                                                  extract_expect_reg(expect)? {
+                            (false, expect)
+                        } else {
+                            if is_temp {
+                                (true, left_reg)
+                            } else {
+                                (true, res_alloc.reg_alloc.push(None))
+                            }
+                        };
+                        CodeGen::emit_iABC(instructions, op, result_reg, left_reg, right_reg);
+                        Ok((result_is_temp, result_reg))
+                    }
+                    _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
+
                 }
             }
             Expr::Var(ref var) => {
@@ -277,7 +293,141 @@ impl CodeGen {
                                          instructions)?;
                 Ok((true, central_reg))
             }
+            Expr::UnaryOp(op, ref left) => {
+                match op{
+                    FlagType::Minus => unimplemented!(),
+                    FlagType::Plus => self.visit_expr(left, res_alloc, instructions, expect),
+                    _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
+                }
+            }
             _ => unimplemented!(),
+        }
+    }
+
+    fn visit_logic_arith(&mut self,
+                         expr: &Expr,
+                         res_alloc: &mut ResourceAlloc,
+                         instruction: &mut Vec<OpMode>,
+                         expect: Option<Expect>)
+                         -> Result<(bool, u32), CompileError> {
+        let result_reg = if let Some(expect) = extract_expect_reg(expect)? {
+            expect
+        } else {
+            res_alloc.reg_alloc.push(None)
+        };
+
+        let true_label = res_alloc.label_alloc.new_label();
+        let false_label = res_alloc.label_alloc.new_label();
+        let mut raw = self.visit_boolean_expr(expr, res_alloc, true_label, false_label, true)?;
+        raw.push(OpMode::Label(false_label));
+        CodeGen::emit_iABC(&mut raw, OpName::LOADBOOL, result_reg, 0, 1);
+        raw.push(OpMode::Label(true_label));
+        CodeGen::emit_iABC(&mut raw, OpName::LOADBOOL, result_reg, 1, 0);
+        instruction.append(&mut raw.remove_label());
+        Ok((true, result_reg))
+    }
+
+    fn visit_boolean_expr(&mut self,
+                          expr: &Expr,
+                          res_alloc: &mut ResourceAlloc,
+                          true_br: Label,
+                          false_br: Label,
+                          fall_through: bool)
+                          -> Result<Vec<OpMode>, CompileError> {
+        match *expr {
+            Expr::BinOp(op, ref left, ref right) => {
+                match op {
+                    FlagType::OR => {
+                        let label_for_right = res_alloc.label_alloc.new_label();
+                        let mut left_raw =
+                            self.visit_boolean_expr(left,
+                                                    res_alloc,
+                                                    true_br,
+                                                    label_for_right,
+                                                    true)?;
+                        let mut right_raw =
+                            self.visit_boolean_expr(right, res_alloc, true_br, false_br, fall_through)?;
+                        // merge
+                        left_raw.push(OpMode::Label(label_for_right));
+                        left_raw.append(&mut right_raw);
+                        Ok(left_raw)
+                    }
+                    FlagType::AND => {
+                        let label_for_right = res_alloc.label_alloc.new_label();
+                        let mut left_raw =
+                            self.visit_boolean_expr(left,
+                                                    res_alloc,
+                                                    label_for_right,
+                                                    false_br,
+                                                    false)?;
+                        let mut right_raw =
+                            self.visit_boolean_expr(right, res_alloc, true_br, false_br, fall_through)?;
+                        left_raw.push(OpMode::Label(label_for_right));
+                        left_raw.append(&mut right_raw);
+                        Ok(left_raw)
+                    }
+                    FlagType::LESS | FlagType::LEQ | FlagType::GREATER | FlagType::GEQ |
+                    FlagType::EQ | FlagType::NEQ => {
+                        let mut raw = vec![];
+                        let (_, left_reg) = self.visit_expr(left, res_alloc, &mut raw, None)?;
+                        let (_, right_reg) = self.visit_expr(right, res_alloc, &mut raw, None)?;
+                        let (op_name, test_bool) = match op {
+                            FlagType::LESS => (OpName::LT, true),
+                            FlagType::LEQ => (OpName::LE, true),
+                            FlagType::GREATER => (OpName::LE, false),
+                            FlagType::GEQ => (OpName::LT, false),
+                            FlagType::EQ => (OpName::EQ, true),
+                            FlagType::NEQ => (OpName::EQ, false),
+                            _ => panic!("should not appear"),
+                        };
+                        // adjust code arrangement according to fall_through
+                        let (test_int, path) = if fall_through{
+                            (test_bool as u32, true_br)
+                        } else {
+                            ((!test_bool) as u32, false_br)
+                        };
+                        CodeGen::emit_iABC(&mut raw, op_name, test_int, left_reg, right_reg);
+                        CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, path);
+                        // CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                        Ok(raw)
+                    }
+                    _ => panic!("expression not accept as boolean"),
+                }
+            }
+            Expr::UnaryOp(op, ref left) => {
+                match op {
+                    FlagType::Not => {
+                        self.visit_boolean_expr(left, res_alloc, false_br, true_br, !fall_through)
+                    }
+                    _ => panic!("expression not accept as boolean"),
+                }
+            }
+            Expr::Var(ref var) => {
+                let mut raw = vec![];
+                let (_, reg) = self.visit_var(var, res_alloc, &mut raw, None)?;
+                if fall_through == true {
+                    // fall to true path
+                    CodeGen::emit_iABx(&mut raw, OpName::TEST, reg, 1);
+                    CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, true_br);
+                    // CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                } else {
+                    // fall to false path
+                    CodeGen::emit_iABx(&mut raw, OpName::TEST, reg, 0);
+                    CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                    // CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, true_br);
+                }
+                Ok(raw)
+            }
+            Expr::Boole(value) => {
+                let mut raw = vec![];
+                if value {
+                    CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, true_br);
+                } else {
+                    CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                }
+                Ok(raw)
+            }
+            _ => panic!("expression not accept"),
         }
     }
 
@@ -416,12 +566,12 @@ impl CodeGen {
         Ok(func_pos)
     }
 
-    fn adjust_list(&mut self,
-                 varlist: &Vec<Var>,
-                 exprlist: &Vec<Box<Expr>>,
-                 res_alloc: &mut ResourceAlloc,
-                 instructions: &mut Vec<OpMode>)
-                 -> Result<(Vec<Var>, Vec<Box<Expr>>), CompileError> {
+    fn adjust_list<T: Clone>(&mut self,
+                             varlist: &Vec<T>,
+                             exprlist: &Vec<Box<Expr>>,
+                             res_alloc: &mut ResourceAlloc,
+                             instructions: &mut Vec<OpMode>)
+                             -> Result<(Vec<T>, Vec<Box<Expr>>), CompileError> {
         // balanced
         if varlist.len() == exprlist.len() {
             return Ok((varlist.clone(), exprlist.clone()));
@@ -485,6 +635,11 @@ impl CodeGen {
     fn emit_iABC(instructions: &mut Vec<OpMode>, op: OpName, A: u32, B: u32, C: u32) {
         instructions.push(OpMode::iABC(op, A, B, C));
     }
+
+    #[allow(non_snake_case)]
+    fn emit_iAsBx(instructions: &mut Vec<OpMode>, op: OpName, A: u32, sBx: i32) {
+        instructions.push(OpMode::iAsBx(op, A, sBx));
+    }
 }
 
 // #[cfg(test)]
@@ -526,10 +681,23 @@ pub mod tests {
             func = function(para)
                 return a + para, 0
             end
-            local b = func(1)
+            local b, c = func(1, 2)
+            local d = b + c
         "))
             .unwrap();
         let mut compiler = CodeGen::new();
         assert_eq!(compiler.compile(&ast), Ok(()));
+        // println!("{:?}", compiler.root_function);
+    }
+    // #[test]
+    pub fn boolean() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+            local a, b = true, false
+            local c = not ( 2 <= 3 or a == b )
+        "))
+            .unwrap();
+        let mut compiler = CodeGen::new();
+        assert_eq!(compiler.compile(&ast), Ok(()));
+        println!("{:?}", compiler.root_function);
     }
 }

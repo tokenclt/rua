@@ -200,11 +200,29 @@ impl FunctionAlloc {
 }
 
 #[derive(Debug)]
+/// label allocator
+pub struct LabelAlloc {
+    counter: i32
+}
+
+impl LabelAlloc{
+    pub fn new() -> LabelAlloc {
+        LabelAlloc{counter: 0}
+    }
+
+    pub fn new_label(&mut self) -> i32 {
+        self.counter += 1;
+        self.counter
+    }
+}
+
+#[derive(Debug)]
 pub struct ResourceAlloc {
     pub reg_alloc: RegisterAlloc,
     pub const_alloc: ConstAlloc,
     pub function_alloc: FunctionAlloc,
     pub upvalue_alloc: UpValueAlloc,
+    pub label_alloc: LabelAlloc,
     pub parent: *mut ResourceAlloc,
 }
 
@@ -215,6 +233,7 @@ impl ResourceAlloc {
             const_alloc: ConstAlloc::new(),
             function_alloc: FunctionAlloc::new(),
             upvalue_alloc: UpValueAlloc::new(),
+            label_alloc: LabelAlloc::new(),
             parent: ptr::null_mut(),
         }
     }
@@ -237,7 +256,7 @@ impl ResourceAlloc {
         let mut current = self as *mut ResourceAlloc;
         let mut parent = self.parent;
         let mut upvalue_index = (*current).upvalue_alloc.push(upvalue_name, depth, final_pos);
-        // safe the immidiate parent upvalue position, for returning
+        // savefe the immidiate parent upvalue position, for returning
         let immidiate_upvalue_index = upvalue_index;
         // excute when depth >= 2
         for i in 1..depth {
