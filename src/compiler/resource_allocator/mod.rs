@@ -224,6 +224,7 @@ pub struct ResourceAlloc {
     pub upvalue_alloc: UpValueAlloc,
     pub label_alloc: LabelAlloc,
     pub parent: *mut ResourceAlloc,
+    loop_exit: Option<Label>
 }
 
 impl ResourceAlloc {
@@ -235,6 +236,7 @@ impl ResourceAlloc {
             upvalue_alloc: UpValueAlloc::new(),
             label_alloc: LabelAlloc::new(),
             parent: ptr::null_mut(),
+            loop_exit: None
         }
     }
 
@@ -269,5 +271,17 @@ impl ResourceAlloc {
             parent = (*parent).parent;
         }
         immidiate_upvalue_index
+    }
+
+    pub fn set_loop_exit(&mut self, label: Label) {
+        self.loop_exit = Some(label);
+    }
+
+    pub fn clear_loop_exit(&mut self) {
+        self.loop_exit = None;
+    }
+
+    pub fn get_loop_exit(&self) -> Option<Label> {
+        self.loop_exit
     }
 }

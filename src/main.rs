@@ -6,6 +6,5 @@ mod compiler;
 
 use compiler::tests;
 fn main() {
-    //tests::function_call();
-    tests::boolean();
+    // tests::while_clause();
 }

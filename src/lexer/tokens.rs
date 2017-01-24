@@ -83,6 +83,7 @@ pub fn get_keyword_table() -> HashMap<String, FlagType> {
         "local" => FlagType::Local,
         "nil" => FlagType::Nil,
         "goto" => FlagType::Goto,
+        "while" => FlagType::While,
         "break" => FlagType::Break,
         "do" => FlagType::Do,
         "end" => FlagType::End,

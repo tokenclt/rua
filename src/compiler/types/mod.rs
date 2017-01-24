@@ -96,7 +96,9 @@ pub trait RemoveLabel {
 }
 
 impl RemoveLabel for Vec<OpMode> {
+    // FIXME: what if normal jump exist
     fn remove_label(&self) -> Vec<OpMode> {
+        //println!("Before remove: {:?}", self);
         // pass one: remove label and build index
         let mut label_removed = vec![];
         let mut index = HashMap::new();
@@ -116,7 +118,7 @@ impl RemoveLabel for Vec<OpMode> {
         let mut replaced = vec![];
         for (pos, ins) in label_removed.iter().enumerate() {
             match *ins {
-                &OpMode::iAsBx(OpName::JMP, _, ref label) => {
+                &OpMode::rJMP(ref label) => {
                     // TODO: negative jmp
                     let num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
                     if num != 0 {

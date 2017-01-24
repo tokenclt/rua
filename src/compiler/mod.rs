@@ -40,13 +40,18 @@ impl CodeGen {
         // TODO: add header
         // root block should not have retstat
         // is_vararg (always 2 for top level function )
-        self.visit_function(node, None, &vec![], true)
-            .map(|mut func| self.root_function = func.prototype)
+        if let Node::Block(ref block) = *node {
+            self.visit_function(block, None, &vec![], true)
+                .map(|mut func| self.root_function = func.prototype)
+        } else {
+            // can not find entry block
+            Err(CompileError::SyntexError)
+        }
     }
     /// visit function body, ret: upvalue_num, prototype
     /// assuming scope is newly initiated
     fn visit_function(&mut self,
-                      node: &Node,
+                      block: &Block,
                       parent_alloc: Option<&mut ResourceAlloc>,
                       paras: &Vec<Name>,
                       is_vararg: bool)
@@ -65,7 +70,7 @@ impl CodeGen {
             self.symbol_table.define_local(name, pos);
         }
         //  visit body instuctions
-        try!(self.visit_block(node, &mut res_alloc, &mut instructions));
+        self.visit_block(block, &mut res_alloc, &mut instructions)?;
         // add a return, may be redundant
         CodeGen::emit_iABx(&mut instructions, OpName::RETURN, 0, 1);
         // number of upvalues
@@ -79,7 +84,8 @@ impl CodeGen {
         //    size
         func_chunk.ins_len = instructions.len() as Usize;
         //    instructions
-        func_chunk.instructions = instructions;
+        //  replace label with number
+        func_chunk.instructions = instructions.remove_label();
         // list of constants
         func_chunk.constants = res_alloc.const_alloc.dump();
         // list of function prototypes
@@ -91,22 +97,19 @@ impl CodeGen {
     /// ret: number of returned
     /// None means no return stat
     fn visit_block(&mut self,
-                   node: &Node,
+                   block: &Block,
                    res_alloc: &mut ResourceAlloc,
                    instructions: &mut Vec<OpMode>)
                    -> Result<(), CompileError> {
-        if let Node::Block(Block { ref stats, ref ret }) = *node {
-            for stat in stats {
-                self.visit_stat(stat, res_alloc, instructions)?;
-            }
-            // if ret statement exists
-            if let &Some(ref ret_exprs) = ret {
-                self.visit_stat(&Stat::Ret(ret_exprs.clone()), res_alloc, instructions)?;
-            }
-            Ok(())
-        } else {
-            panic!("Block should be ensured by parser");
+        for stat in &block.stats {
+            self.visit_stat(stat, res_alloc, instructions)?;
         }
+        // if ret statement exists
+        if let Some(ref ret_exprs) = block.ret {
+            self.visit_stat(&Stat::Ret(ret_exprs.clone()), res_alloc, instructions)?;
+        }
+        Ok(())
+
     }
 
     /// ret:
@@ -126,22 +129,22 @@ impl CodeGen {
                 //       loadnill should be performed at the end
                 let (varlist, exprlist) =
                     self.adjust_list(varlist, exprlist, res_alloc, instructions)?;
-                let reg_list = try!(self.visit_exprlist(&exprlist, res_alloc, instructions));
-                for (var, expr) in varlist.into_iter().zip(reg_list.into_iter()) {
-                    match var {
+                for (ref var, ref expr) in varlist.into_iter().zip(exprlist.into_iter()) {
+                    match *var {
                         Var::Name(ref name) => {
                             // lookup , confirm if symbol is already defined
                             match self.symbol_table.lookup(name) {
                                 Some((SymbolScope::Global, _)) |
                                 None => {
                                     let const_pos = self.prepare_global_value(name, res_alloc); /* add name to const list and define global symbol */
+                                    let (_, reg) = self.visit_expr(expr, res_alloc, instructions, None)?;
                                     CodeGen::emit_iABx(instructions,
                                                        OpName::SETGLOBAL,
-                                                       expr.1, // only need reg pos
+                                                       reg, 
                                                        const_pos);
                                 }
                                 Some((SymbolScope::Local, pos)) => {
-                                    CodeGen::emit_iABx(instructions, OpName::MOVE, pos, expr.1);
+                                    self.visit_expr(expr, res_alloc, instructions, Some(Expect::Reg(pos)))?;
                                 }
                                 Some((SymbolScope::UpValue(_), _)) => unimplemented!(),
                             }
@@ -188,6 +191,61 @@ impl CodeGen {
                                    start_register,
                                    (ret_num + 1) as u32);
                 Ok(())
+            }
+            Stat::IfElse(ref test_expr, ref then_block, ref else_block) => {
+                // if then else 
+                if let &Some(ref else_block) = else_block {
+                    let then_label = res_alloc.label_alloc.new_label();
+                    let else_label = res_alloc.label_alloc.new_label();
+                    let next_label = res_alloc.label_alloc.new_label();
+                    // jmp is not needed for then_block
+                    let mut raw = self.visit_boolean_expr(test_expr,res_alloc, then_label, else_label, false)?;
+                    raw.push(OpMode::Label(then_label));
+                    self.visit_block(then_block, res_alloc, &mut raw)?;
+                    raw.push(OpMode::rJMP(next_label));
+                    raw.push(OpMode::Label(else_label));
+                    self.visit_block(else_block, res_alloc, &mut raw)?;
+                    raw.push(OpMode::Label(next_label));
+
+                    instructions.append(&mut raw);
+                } else {
+                    // if else 
+                    let then_label = res_alloc.label_alloc.new_label();
+                    let next_label = res_alloc.label_alloc.new_label();
+                    let mut raw = self.visit_boolean_expr(test_expr, res_alloc, then_label, next_label, false)?;
+                    raw.push(OpMode::Label(then_label));
+                    self.visit_block(then_block, res_alloc, &mut raw)?;
+                    raw.push(OpMode::Label(next_label));
+
+                    instructions.append(&mut raw);
+                }
+                Ok(())
+            }
+            Stat::While(ref test_expr, ref do_block) => {
+                let begin_label = res_alloc.label_alloc.new_label();
+                let do_label = res_alloc.label_alloc.new_label();
+                let next_label = res_alloc.label_alloc.new_label();
+                // set exit for Break stat
+                res_alloc.set_loop_exit(next_label);
+                let mut raw = vec![OpMode::Label(begin_label)];
+                raw.append(&mut self.visit_boolean_expr(test_expr, res_alloc, do_label, next_label, false)?);
+                raw.push(OpMode::Label(do_label));
+                self.visit_block(do_block, res_alloc, &mut raw)?;
+                raw.push(OpMode::rJMP(begin_label));
+                raw.push(OpMode::Label(next_label));
+                // clear exit
+                res_alloc.clear_loop_exit();
+
+                instructions.append(&mut raw);
+                Ok(())
+            }
+            Stat::Break => {
+                if let Some(exit_label) = res_alloc.get_loop_exit() {
+                    instructions.push(OpMode::rJMP(exit_label));
+                    Ok(())
+                } else {
+                    Err(CompileError::SyntexError)
+                }
             }
             _ => unimplemented!(),
         }
@@ -294,7 +352,7 @@ impl CodeGen {
                 Ok((true, central_reg))
             }
             Expr::UnaryOp(op, ref left) => {
-                match op{
+                match op {
                     FlagType::Minus => unimplemented!(),
                     FlagType::Plus => self.visit_expr(left, res_alloc, instructions, expect),
                     _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
@@ -323,7 +381,7 @@ impl CodeGen {
         CodeGen::emit_iABC(&mut raw, OpName::LOADBOOL, result_reg, 0, 1);
         raw.push(OpMode::Label(true_label));
         CodeGen::emit_iABC(&mut raw, OpName::LOADBOOL, result_reg, 1, 0);
-        instruction.append(&mut raw.remove_label());
+        instruction.append(&mut raw);
         Ok((true, result_reg))
     }
 
@@ -346,7 +404,11 @@ impl CodeGen {
                                                     label_for_right,
                                                     true)?;
                         let mut right_raw =
-                            self.visit_boolean_expr(right, res_alloc, true_br, false_br, fall_through)?;
+                            self.visit_boolean_expr(right,
+                                                    res_alloc,
+                                                    true_br,
+                                                    false_br,
+                                                    fall_through)?;
                         // merge
                         left_raw.push(OpMode::Label(label_for_right));
                         left_raw.append(&mut right_raw);
@@ -361,7 +423,11 @@ impl CodeGen {
                                                     false_br,
                                                     false)?;
                         let mut right_raw =
-                            self.visit_boolean_expr(right, res_alloc, true_br, false_br, fall_through)?;
+                            self.visit_boolean_expr(right,
+                                                    res_alloc,
+                                                    true_br,
+                                                    false_br,
+                                                    fall_through)?;
                         left_raw.push(OpMode::Label(label_for_right));
                         left_raw.append(&mut right_raw);
                         Ok(left_raw)
@@ -381,13 +447,13 @@ impl CodeGen {
                             _ => panic!("should not appear"),
                         };
                         // adjust code arrangement according to fall_through
-                        let (test_int, path) = if fall_through{
+                        let (test_int, path) = if fall_through {
                             (test_bool as u32, true_br)
                         } else {
                             ((!test_bool) as u32, false_br)
                         };
-                        CodeGen::emit_iABC(&mut raw, op_name, test_int, left_reg, right_reg);
-                        CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, path);
+                        raw.push(OpMode::iABC(op_name, test_int, left_reg, right_reg));
+                        raw.push(OpMode::rJMP(path));
                         // CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
                         Ok(raw)
                     }
@@ -407,13 +473,13 @@ impl CodeGen {
                 let (_, reg) = self.visit_var(var, res_alloc, &mut raw, None)?;
                 if fall_through == true {
                     // fall to true path
-                    CodeGen::emit_iABx(&mut raw, OpName::TEST, reg, 1);
-                    CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, true_br);
+                    raw.push(OpMode::iABx(OpName::TEST, reg, 1));
+                    raw.push(OpMode::rJMP(true_br));
                     // CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
                 } else {
                     // fall to false path
-                    CodeGen::emit_iABx(&mut raw, OpName::TEST, reg, 0);
-                    CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                    raw.push(OpMode::iABx(OpName::TEST, reg, 0));
+                    raw.push(OpMode::rJMP(false_br));
                     // CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, true_br);
                 }
                 Ok(raw)
@@ -421,9 +487,10 @@ impl CodeGen {
             Expr::Boole(value) => {
                 let mut raw = vec![];
                 if value {
-                    CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, true_br);
+                    raw.push(OpMode::rJMP(true_br));
                 } else {
                     CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                    raw.push(OpMode::rJMP(false_br));
                 }
                 Ok(raw)
             }
@@ -689,7 +756,7 @@ pub mod tests {
         assert_eq!(compiler.compile(&ast), Ok(()));
         // println!("{:?}", compiler.root_function);
     }
-    // #[test]
+    #[test]
     pub fn boolean() {
         let ast = Parser::<Chars>::ast_from_text(&String::from("\
             local a, b = true, false
@@ -698,6 +765,39 @@ pub mod tests {
             .unwrap();
         let mut compiler = CodeGen::new();
         assert_eq!(compiler.compile(&ast), Ok(()));
-        println!("{:?}", compiler.root_function);
+        // println!("{:?}", compiler.root_function);
+    }
+    #[test]
+    pub fn if_else_clause() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+            local a, b = true, false
+            local c
+            if a ~= b and 2 < 3 then
+                c = 1
+            elseif 3 <= 4 then
+                c = 0
+            else 
+                c = 2
+            end
+        ")).expect("Parse Error");
+        let mut compiler = CodeGen::new();
+        assert_eq!(compiler.compile(&ast), Ok(()));
+        // println!("{:?}", compiler.root_function);
+    }
+    #[test]
+    pub fn while_clause() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+            local i, sum = 0, 0
+            while i <= 100 do 
+                sum = sum + i
+                if sum == 5000 then
+                    break
+                end
+                i = i + 1
+            end
+        ")).expect("Parse Error");
+        let mut compiler = CodeGen::new();
+        assert_eq!(compiler.compile(&ast), Ok(()));
+        // println!("Byte Code: {:?}", compiler.root_function);
     }
 }

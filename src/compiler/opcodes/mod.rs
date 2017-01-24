@@ -32,7 +32,8 @@ pub enum OpMode {
     iABx(OpName, u32, u32),
     iAsBx(OpName, u32, i32),
     /// for jmp instruction
-    Label(i32),
+    Label(Label),
+    rJMP(Label),
 }
 
 #[allow(dead_code)]

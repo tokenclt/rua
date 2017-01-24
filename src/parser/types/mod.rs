@@ -10,7 +10,7 @@ pub enum Expr {
     BinOp(FlagType, Box<Expr>, Box<Expr>),
     UnaryOp(FlagType, Box<Expr>),
     // named paras and has_unnamed
-    FunctionDef((Vec<Name>, bool), Box<Node>),
+    FunctionDef((Vec<Name>, bool), Box<Block>),
     // evaluating the expr yields the name of function, args, is_vararg
     FunctionCall(Box<Expr>, Vec<Box<Expr>>, bool)
 }
@@ -66,9 +66,9 @@ pub enum Stat {
     // is_local
     Assign(Vec<Var>, Vec<Box<Expr>>),
     AssignLocal(Vec<Name>, Vec<Box<Expr>>),
-    IfElse(Box<Expr>, Box<Node>, Option<Box<Node>>),
-    While(Box<Expr>, Box<Node>),
-    ForRange(Vec<Name>, Vec<Box<Expr>>, Box<Node>),
+    IfElse(Box<Expr>, Box<Block>, Option<Box<Block>>),
+    While(Box<Expr>, Box<Block>),
+    ForRange(Vec<Name>, Vec<Box<Expr>>, Box<Block>),
     Ret(Vec<Box<Expr>>)
 }
 
