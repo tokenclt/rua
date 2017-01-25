@@ -239,6 +239,34 @@ impl CodeGen {
                 instructions.append(&mut raw);
                 Ok(())
             }
+            Stat::ForNumeric(ref name, ref start, ref end, ref step, ref block) => {
+                let block_label = res_alloc.label_alloc.new_label();
+                let test_label = res_alloc.label_alloc.new_label();
+                let next_label = res_alloc.label_alloc.new_label();
+                let mut raw = vec![];
+                // four adjacent registers
+                let start_reg = res_alloc.reg_alloc.push(None);
+                let end_reg = res_alloc.reg_alloc.push(None);
+                let step_reg = res_alloc.reg_alloc.push(None);
+                //      exposed as local
+                let local_reg = res_alloc.reg_alloc.push(Some(name));
+                self.symbol_table.define_local(name, local_reg);
+                self.visit_expr(start, res_alloc, &mut raw, Some(Expect::Reg(start_reg)))?;
+                self.visit_expr(end, res_alloc, &mut raw, Some(Expect::Reg(end_reg)))?;
+                self.visit_expr(step,res_alloc,&mut raw, Some(Expect::Reg(step_reg)))?;
+                raw.push(OpMode::rForPrep(start_reg, test_label));
+                raw.push(OpMode::Label(block_label));
+                // set exit 
+                res_alloc.set_loop_exit(next_label);
+                self.visit_block(block, res_alloc, &mut raw)?;
+                res_alloc.clear_loop_exit();
+                raw.push(OpMode::Label(test_label));
+                raw.push(OpMode::rForLoop(start_reg, block_label));
+                raw.push(OpMode::Label(next_label));
+
+                instructions.append(&mut raw);
+                Ok(())
+            }
             Stat::Break => {
                 if let Some(exit_label) = res_alloc.get_loop_exit() {
                     instructions.push(OpMode::rJMP(exit_label));
@@ -799,5 +827,20 @@ pub mod tests {
         let mut compiler = CodeGen::new();
         assert_eq!(compiler.compile(&ast), Ok(()));
         // println!("Byte Code: {:?}", compiler.root_function);
+    }
+    // #[test]
+    pub fn numeric_for_clause() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+            local sum = 0
+            for i = 1, 100, 1 do
+                sum = sum + i
+                if sum == 1000 then
+                    break
+                end
+            end
+        ")).expect("Parse Error");
+        let mut compiler = CodeGen::new();
+        assert_eq!(compiler.compile(&ast), Ok(()));
+        println!("Byte code: {:?}", compiler.root_function);
     }
 }

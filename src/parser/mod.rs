@@ -245,10 +245,6 @@ impl<'a, Tit> Parser<'a, Tit>
             _ => self.disj(),
         }
     }
-
-    fn error() {
-        panic!("Unexpected token");
-    }
 }
 
 /// Statement parser
@@ -290,7 +286,7 @@ impl<'a, Tit> Parser<'a, Tit>
                     Token::Flag(FlagType::Local) => self.assign_local(),
                     Token::Name(_) => {
                         // back up current position
-                        let it_backup = self.token_iter.clone();
+                        // let it_backup = self.token_iter.clone();
                         // try parse by rule: assign list of expr to list of name
                         match self.assign() {
                             Ok(stat) => Ok(stat),
@@ -304,6 +300,7 @@ impl<'a, Tit> Parser<'a, Tit>
                     Token::Flag(FlagType::Else) |
                     Token::Flag(FlagType::Elseif) => Err(ParserError::ExpectationUnmeet), 
                     Token::Flag(FlagType::While) => self.while_do(),
+                    Token::Flag(FlagType::For) => self.for_clause(),
                     Token::Flag(FlagType::Break) => {
                         self.eat(FlagType::Break).unwrap();
                         Ok(Box::new(Stat::Break))
@@ -529,14 +526,47 @@ impl<'a, Tit> Parser<'a, Tit>
         Ok(Box::new(Stat::While(expr, block)))
     }
 
-    /// RangedFor: for Namelist in Exprlist do block end
-    fn ranged_for(&mut self) -> Result<Box<Stat>, ParserError> {
+    fn for_clause(&mut self) -> Result<Box<Stat>, ParserError> {
         self.eat(FlagType::For).unwrap();
-        let namelist = try!(self.namelist());
-        try!(self.eat(FlagType::In).or(Err(ParserError::SyntaxError)));
-        let exprlist = try!(self.exprlist());
-        try!(self.eat(FlagType::Do).or(Err(ParserError::SyntaxError)));
-        let block = try!(self.block());
+        let namelist = self.namelist()?;
+        match self.peek_clone() {
+            Some(Token::Flag(FlagType::Assign)) => {
+                if namelist.len() == 1 {
+                    self.numeric_for(namelist[0].clone())
+                } else {
+                    Err(ParserError::SyntaxError)
+                }
+            }
+            Some(Token::Flag(FlagType::In)) => self.ranged_for(namelist),
+            _ => Err(ParserError::SyntaxError),
+        }
+    }
+
+    /// for Name = expr, expr [, expr] do Block end
+    fn numeric_for(&mut self, name: Name) -> Result<Box<Stat>, ParserError> {
+        self.eat(FlagType::Assign).unwrap();
+        let start = self.expr()?;
+        self.eat(FlagType::Comma).or(Err(ParserError::SyntaxError))?;
+        let end = self.expr()?;
+        // step : default 1
+        let step = if let Ok(_) = self.eat(FlagType::Comma) {
+            self.expr()?
+        } else {
+            Box::new(Expr::Num(1_f64))
+        };
+        self.eat(FlagType::Do).or(Err(ParserError::SyntaxError))?;
+        let block = self.block()?;
+        self.eat(FlagType::End)?;
+        Ok(Box::new(Stat::ForNumeric(name, start, end, step, block)))
+    }
+
+    /// RangedFor: for Namelist in Exprlist do block end
+    fn ranged_for(&mut self, namelist: Vec<Name>) -> Result<Box<Stat>, ParserError> {
+        self.eat(FlagType::In).unwrap();
+        let exprlist = self.exprlist()?;
+        self.eat(FlagType::Do).or(Err(ParserError::SyntaxError))?;
+        let block = self.block()?;
+        self.eat(FlagType::End)?;
         Ok(Box::new(Stat::ForRange(namelist, exprlist, block)))
     }
 }

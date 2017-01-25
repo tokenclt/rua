@@ -28,14 +28,6 @@ impl Block {
             ret: ret,
         }
     }
-
-    pub fn from_node_enum(node: Node) -> Option<Block> {
-        if let Node::Block(content) = node {
-            Some(content)
-        }else{
-            None
-        }
-    }
 }
 
 pub type Name = String;
@@ -69,6 +61,7 @@ pub enum Stat {
     IfElse(Box<Expr>, Box<Block>, Option<Box<Block>>),
     While(Box<Expr>, Box<Block>),
     ForRange(Vec<Name>, Vec<Box<Expr>>, Box<Block>),
+    ForNumeric(Name, Box<Expr>, Box<Expr>, Box<Expr>, Box<Block>),
     Ret(Vec<Box<Expr>>)
 }
 

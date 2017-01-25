@@ -34,6 +34,8 @@ pub enum OpMode {
     /// for jmp instruction
     Label(Label),
     rJMP(Label),
+    rForPrep(u32, Label),
+    rForLoop(u32, Label),
 }
 
 #[allow(dead_code)]

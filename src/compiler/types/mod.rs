@@ -117,13 +117,21 @@ impl RemoveLabel for Vec<OpMode> {
         // pass two: replace label with number
         let mut replaced = vec![];
         for (pos, ins) in label_removed.iter().enumerate() {
-            match *ins {
-                &OpMode::rJMP(ref label) => {
+            match **ins {
+                OpMode::rJMP(ref label) => {
                     // TODO: negative jmp
                     let num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
                     if num != 0 {
                         replaced.push(OpMode::iAsBx(OpName::JMP, 0, num));
                     }
+                }
+                OpMode::rForPrep(reg, ref label) => {
+                    let num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
+                    replaced.push(OpMode::iAsBx(OpName::FORPREP, reg, num));
+                }
+                OpMode::rForLoop(reg, ref label) => {
+                    let num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
+                    replaced.push(OpMode::iAsBx(OpName::FORLOOP, reg, num));
                 }
                 _ => replaced.push((*ins).clone()),
             }
