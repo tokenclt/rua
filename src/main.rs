@@ -6,5 +6,5 @@ mod compiler;
 
 use compiler::tests;
 fn main() {
-    tests::numeric_for_clause();
+    tests::table_constructor();
 }

@@ -137,14 +137,18 @@ impl CodeGen {
                                 Some((SymbolScope::Global, _)) |
                                 None => {
                                     let const_pos = self.prepare_global_value(name, res_alloc); /* add name to const list and define global symbol */
-                                    let (_, reg) = self.visit_expr(expr, res_alloc, instructions, None)?;
+                                    let (_, reg) =
+                                        self.visit_expr(expr, res_alloc, instructions, None)?;
                                     CodeGen::emit_iABx(instructions,
                                                        OpName::SETGLOBAL,
-                                                       reg, 
+                                                       reg,
                                                        const_pos);
                                 }
                                 Some((SymbolScope::Local, pos)) => {
-                                    self.visit_expr(expr, res_alloc, instructions, Some(Expect::Reg(pos)))?;
+                                    self.visit_expr(expr,
+                                                    res_alloc,
+                                                    instructions,
+                                                    Some(Expect::Reg(pos)))?;
                                 }
                                 Some((SymbolScope::UpValue(_), _)) => unimplemented!(),
                             }
@@ -158,7 +162,7 @@ impl CodeGen {
             Stat::AssignLocal(ref namelist, ref exprlist) => {
                 let (namelist, exprlist) =
                     self.adjust_list(namelist, exprlist, res_alloc, instructions)?;
-                let reg_list = try!(self.visit_exprlist(&exprlist, res_alloc, instructions));
+                let reg_list = self.visit_exprlist(&exprlist, res_alloc, instructions)?;
                 for (ref name, (is_temp, expr_reg)) in namelist.into_iter()
                     .zip(reg_list.into_iter()) {
                     if is_temp {
@@ -193,13 +197,18 @@ impl CodeGen {
                 Ok(())
             }
             Stat::IfElse(ref test_expr, ref then_block, ref else_block) => {
-                // if then else 
+                // if then else
                 if let &Some(ref else_block) = else_block {
                     let then_label = res_alloc.label_alloc.new_label();
                     let else_label = res_alloc.label_alloc.new_label();
                     let next_label = res_alloc.label_alloc.new_label();
                     // jmp is not needed for then_block
-                    let mut raw = self.visit_boolean_expr(test_expr,res_alloc, then_label, else_label, false)?;
+                    let mut raw =
+                        self.visit_boolean_expr(test_expr,
+                                                res_alloc,
+                                                then_label,
+                                                else_label,
+                                                false)?;
                     raw.push(OpMode::Label(then_label));
                     self.visit_block(then_block, res_alloc, &mut raw)?;
                     raw.push(OpMode::rJMP(next_label));
@@ -209,10 +218,15 @@ impl CodeGen {
 
                     instructions.append(&mut raw);
                 } else {
-                    // if else 
+                    // if else
                     let then_label = res_alloc.label_alloc.new_label();
                     let next_label = res_alloc.label_alloc.new_label();
-                    let mut raw = self.visit_boolean_expr(test_expr, res_alloc, then_label, next_label, false)?;
+                    let mut raw =
+                        self.visit_boolean_expr(test_expr,
+                                                res_alloc,
+                                                then_label,
+                                                next_label,
+                                                false)?;
                     raw.push(OpMode::Label(then_label));
                     self.visit_block(then_block, res_alloc, &mut raw)?;
                     raw.push(OpMode::Label(next_label));
@@ -253,10 +267,10 @@ impl CodeGen {
                 self.symbol_table.define_local(name, local_reg);
                 self.visit_expr(start, res_alloc, &mut raw, Some(Expect::Reg(start_reg)))?;
                 self.visit_expr(end, res_alloc, &mut raw, Some(Expect::Reg(end_reg)))?;
-                self.visit_expr(step,res_alloc,&mut raw, Some(Expect::Reg(step_reg)))?;
+                self.visit_expr(step, res_alloc, &mut raw, Some(Expect::Reg(step_reg)))?;
                 raw.push(OpMode::rForPrep(start_reg, test_label));
                 raw.push(OpMode::Label(block_label));
-                // set exit 
+                // set exit
                 res_alloc.set_loop_exit(next_label);
                 self.visit_block(block, res_alloc, &mut raw)?;
                 res_alloc.clear_loop_exit();
@@ -385,6 +399,9 @@ impl CodeGen {
                     FlagType::Plus => self.visit_expr(left, res_alloc, instructions, expect),
                     _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
                 }
+            }
+            Expr::TableCtor(ref entrys) => {
+                self.visit_table_ctor(entrys, res_alloc, instructions, expect)
             }
             _ => unimplemented!(),
         }
@@ -527,7 +544,7 @@ impl CodeGen {
     }
 
     fn visit_exprlist(&mut self,
-                      exprlist: &Vec<Box<Expr>>,
+                      exprlist: &Vec<Expr>,
                       res_alloc: &mut ResourceAlloc,
                       instructions: &mut Vec<OpMode>)
                       -> Result<Vec<(bool, u32)>, CompileError> {
@@ -602,7 +619,7 @@ impl CodeGen {
 
     fn visit_function_call(&mut self,
                            expr: &Expr,
-                           args: &Vec<Box<Expr>>,
+                           args: &Vec<Expr>,
                            is_vararg: bool,
                            expect_ret: RetExpect,
                            res_alloc: &mut ResourceAlloc,
@@ -633,7 +650,7 @@ impl CodeGen {
             arg_field = 1;
         } else {
             let mut args_reg = func_pos + 1;
-            if let Expr::FunctionCall(ref expr, ref args, is_vararg) = *args[args.len() - 1] {
+            if let Expr::FunctionCall(ref expr, ref args, is_vararg) = args[args.len() - 1] {
                 for i in 0..(args.len() - 1) {
                     // make sure the args are continous
                     self.visit_expr(&args[i],
@@ -663,10 +680,10 @@ impl CodeGen {
 
     fn adjust_list<T: Clone>(&mut self,
                              varlist: &Vec<T>,
-                             exprlist: &Vec<Box<Expr>>,
+                             exprlist: &Vec<Expr>,
                              res_alloc: &mut ResourceAlloc,
                              instructions: &mut Vec<OpMode>)
-                             -> Result<(Vec<T>, Vec<Box<Expr>>), CompileError> {
+                             -> Result<(Vec<T>, Vec<Expr>), CompileError> {
         // balanced
         if varlist.len() == exprlist.len() {
             return Ok((varlist.clone(), exprlist.clone()));
@@ -682,7 +699,7 @@ impl CodeGen {
         // imbalanced & one function call
         else {
             if exprlist.len() == 1 {
-                if let Expr::FunctionCall(ref expr, ref args, is_vararg) = *exprlist[0] {
+                if let Expr::FunctionCall(ref expr, ref args, is_vararg) = exprlist[0] {
                     let central_reg = self.visit_function_call(expr,
                                              args,
                                              is_vararg,
@@ -690,7 +707,7 @@ impl CodeGen {
                                              res_alloc,
                                              instructions)?;
                     let expr_regs = (central_reg..(central_reg + varlist.len() as u32))
-                        .map(|reg| Box::new(Expr::Var(Var::Reg(reg))))
+                        .map(|reg| Expr::Var(Var::Reg(reg)))
                         .collect();
                     return Ok((varlist.clone(), expr_regs));
                 }
@@ -699,14 +716,99 @@ impl CodeGen {
             let num = (varlist.len() - exprlist.len()) as u32;
             let start_reg = res_alloc.reg_alloc.push(None);
             let mut extended = exprlist.clone();
-            extended.push(Box::new(Expr::Var(Var::Reg(start_reg))));
+            extended.push(Expr::Var(Var::Reg(start_reg)));
             for _ in 1..num {
                 let reg = res_alloc.reg_alloc.push(None);
-                extended.push(Box::new(Expr::Var(Var::Reg(reg))));
+                extended.push(Expr::Var(Var::Reg(reg)));
             }
             CodeGen::emit_iABx(instructions, OpName::LOADNIL, start_reg, num - 1);
             return Ok((varlist.clone(), extended));
         }
+    }
+
+    fn visit_table_ctor(&mut self,
+                        entrys: &Vec<TableEntry>,
+                        res_alloc: &mut ResourceAlloc,
+                        instructions: &mut Vec<OpMode>,
+                        expect: Option<Expect>)
+                        -> Result<(bool, u32), CompileError> {
+        // create table
+        let result_reg = if let Some(expect) = extract_expect_reg(expect)? {
+            expect
+        } else {
+            res_alloc.reg_alloc.push(None)
+        };
+
+        // empty table
+        if entrys.is_empty() {
+            return Ok((true, result_reg));
+        }
+        let (hash_part, array_part) = Self::split_table_entrys(entrys);
+
+        CodeGen::emit_iABC(instructions,
+                           OpName::NEWTABLE,
+                           result_reg,
+                           array_part.len().to_f8(),
+                           hash_part.len().to_f8());
+
+        // add elements in the array_part
+        // fine, I'll follow the standard
+        let flush_num = array_part.len() as u32 / LFIELDS_PER_FLUSH;
+        let residue_num = array_part.len() as u32 % LFIELDS_PER_FLUSH;
+        let mut iter = array_part.into_iter();
+        // allocate register for list element
+        for _ in 0..(if flush_num > 0 {
+            LFIELDS_PER_FLUSH
+        } else {
+            residue_num
+        }) {
+            res_alloc.reg_alloc.push(None);
+        }
+        // first dealing with flush chuck
+        for flush_id in 0..flush_num {
+            // reuse register pool in each flush
+            let mut dest_reg = result_reg + 1;
+            for _ in 0..LFIELDS_PER_FLUSH {
+                self.visit_expr(&iter.next().unwrap(),
+                                res_alloc,
+                                instructions,
+                                Some(Expect::Reg(dest_reg)))?;
+                dest_reg += 1;
+            }
+            // FIXME: consider when flush_id is too large to encode
+            CodeGen::emit_iABC(instructions,
+                               OpName::SETLIST,
+                               result_reg,
+                               LFIELDS_PER_FLUSH,
+                               flush_id + 1);
+        }
+        // then finish residue part
+        let mut dest_reg = result_reg + 1;
+        for _ in 0..residue_num {
+            self.visit_expr(&iter.next().unwrap(),
+                            res_alloc,
+                            instructions,
+                            Some(Expect::Reg(dest_reg)))?;
+            dest_reg += 1;
+        }
+        if residue_num > 0 {
+            CodeGen::emit_iABC(instructions,
+                               OpName::SETLIST,
+                               result_reg,
+                               residue_num,
+                               flush_num + 1);
+        }
+        // add pairs in the hash_part
+        for (key, value) in hash_part {
+            let key_rkc = self.reg_constid_merge(&key, res_alloc, instructions, None)?;
+            let value_rkc = self.reg_constid_merge(&value, res_alloc, instructions, None)?;
+            CodeGen::emit_iABC(instructions,
+                               OpName::SETTABLE,
+                               result_reg,
+                               key_rkc,
+                               value_rkc);
+        }
+        Ok((true, result_reg))
     }
 }
 
@@ -734,6 +836,44 @@ impl CodeGen {
     #[allow(non_snake_case)]
     fn emit_iAsBx(instructions: &mut Vec<OpMode>, op: OpName, A: u32, sBx: i32) {
         instructions.push(OpMode::iAsBx(op, A, sBx));
+    }
+}
+
+/// helper functions
+impl CodeGen {
+    /// split Vec<TableEntry> to hash part(named) and array part(unnamed)
+    fn split_table_entrys(entrys: &Vec<TableEntry>) -> (Vec<(Expr, Expr)>, Vec<Expr>) {
+        let mut hash_part = vec![];
+        let mut array_part = vec![];
+        for &(ref key, ref value) in entrys {
+            match key {
+                &Some(ref k) => hash_part.push((k.clone(), value.clone())),
+                &None => array_part.push(value.clone()),
+            }
+        }
+        (hash_part, array_part)
+    }
+
+    /// for RK(_) field, register id and const id can be merged
+    /// use 9th bit as sign bit
+    /// 8bit as num field
+    /// signed (1) for const_id
+    /// unsigned (0) for register
+    fn reg_constid_merge(&mut self,
+                         expr: &Expr,
+                         res_alloc: &mut ResourceAlloc,
+                         instructions: &mut Vec<OpMode>,
+                         expect: Option<Expect>)
+                         -> Result<u32, CompileError> {
+        let reg_or_const = match expr {
+            &Expr::Var(Var::Name(ref name)) => {
+                0x100 | res_alloc.const_alloc.push(ConstType::Str(name.clone()))
+            }
+            &Expr::Num(num) => 0x100 | res_alloc.const_alloc.push(ConstType::Real(num)),
+            &Expr::Boole(boolean) => 0x100 | res_alloc.const_alloc.push(ConstType::Boole(boolean)), 
+            _ => self.visit_expr(expr, res_alloc, instructions, expect)?.1,
+        };
+        Ok(reg_or_const)
     }
 }
 
@@ -807,7 +947,8 @@ pub mod tests {
             else 
                 c = 2
             end
-        ")).expect("Parse Error");
+        "))
+            .expect("Parse Error");
         let mut compiler = CodeGen::new();
         assert_eq!(compiler.compile(&ast), Ok(()));
         // println!("{:?}", compiler.root_function);
@@ -823,12 +964,13 @@ pub mod tests {
                 end
                 i = i + 1
             end
-        ")).expect("Parse Error");
+        "))
+            .expect("Parse Error");
         let mut compiler = CodeGen::new();
         assert_eq!(compiler.compile(&ast), Ok(()));
         // println!("Byte Code: {:?}", compiler.root_function);
     }
-    // #[test]
+    #[test]
     pub fn numeric_for_clause() {
         let ast = Parser::<Chars>::ast_from_text(&String::from("\
             local sum = 0
@@ -838,8 +980,32 @@ pub mod tests {
                     break
                 end
             end
-        ")).expect("Parse Error");
+        "))
+            .expect("Parse Error");
         let mut compiler = CodeGen::new();
+        assert_eq!(compiler.compile(&ast), Ok(()));
+        println!("Byte code: {:?}", compiler.root_function);
+    }
+    #[test]
+    pub fn constant_format() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+            local a, b, c = 1, 2, 1.5
+        "))
+            .expect("Parse Error");
+        let mut compiler = CodeGen::new();
+        assert_eq!(compiler.compile(&ast), Ok(()));
+        println!("Byte code: {:?}", compiler.root_function);
+    }
+    // #[test]
+    pub fn table_constructor() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+            local table = { name = 'Ann', age = 10 + 8, 
+                           ['sch' + 'ool'] = 'SEIEE';  
+                           1, 2, 3 }
+        "))
+            .expect("Parse Error");
+        let mut compiler = CodeGen::new();
+        println!("Ast: {:?}", ast);
         assert_eq!(compiler.compile(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }

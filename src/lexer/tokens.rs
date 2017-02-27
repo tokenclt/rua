@@ -18,7 +18,7 @@ macro_rules! map(
 pub enum FlagType {
     // variable type
     Integer,
-    Name, 
+    Name,
     Str,
     // keywords
     True,
@@ -41,11 +41,15 @@ pub enum FlagType {
     Function,
     Return,
 
-    Colons, // ';'
+    Semi, // ';'
     Assign, // '='
     Comma, // ','
     LParen,
     RParen,
+    LCrotchet,
+    RCrotchet,
+    LBrace,
+    RBrace,
     // operators
     Plus,
     Minus,
@@ -60,12 +64,12 @@ pub enum FlagType {
     AND,
     OR,
     Not,
+
     Dot,
-    ThreeDot,
+    DoubleDot,
+    TripleDot,
 
     EOF,
-
-    
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,50 +82,53 @@ pub enum Token {
 
 pub fn get_keyword_table() -> HashMap<String, FlagType> {
     map!{
-        "true" => FlagType::True,
-        "false" => FlagType::False,
-        "local" => FlagType::Local,
-        "nil" => FlagType::Nil,
-        "goto" => FlagType::Goto,
-        "while" => FlagType::While,
-        "break" => FlagType::Break,
-        "do" => FlagType::Do,
-        "end" => FlagType::End,
-        "repeat" => FlagType::Repeat,
-        "if" => FlagType::If,
-        "and" => FlagType::AND,
-        "or" => FlagType::OR,
-        "not" => FlagType::Not,
-        "then" => FlagType::Then,
-        "else" => FlagType::Else,
-        "elseif" => FlagType::Elseif,
-        "for" => FlagType::For,
-        "in" => FlagType::In,
-        "function" => FlagType::Function,
-        "return" => FlagType::Return
+        "true"     =>  FlagType::True,
+        "false"    =>  FlagType::False,
+        "local"    =>  FlagType::Local,
+        "nil"      =>  FlagType::Nil,
+        "goto"     =>  FlagType::Goto,
+        "while"    =>  FlagType::While,
+        "break"    =>  FlagType::Break,
+        "do"       =>  FlagType::Do,
+        "end"      =>  FlagType::End,
+        "repeat"   =>  FlagType::Repeat,
+        "if"       =>  FlagType::If,
+        "and"      =>  FlagType::AND,
+        "or"       =>  FlagType::OR,
+        "not"      =>  FlagType::Not,
+        "then"     =>  FlagType::Then,
+        "else"     =>  FlagType::Else,
+        "elseif"   =>  FlagType::Elseif,
+        "for"      =>  FlagType::For,
+        "in"       =>  FlagType::In,
+        "function" =>  FlagType::Function,
+        "return"   =>  FlagType::Return
     }
 }
 
 pub fn get_operator_table() -> HashMap<String, FlagType> {
     map!{
-        ";" => FlagType::Colons,
-        "=" => FlagType::Assign,
-        "," => FlagType::Comma,
-        "(" => FlagType::LParen,
-        ")" => FlagType::RParen,
-        "+" => FlagType::Plus,
-        "-" => FlagType::Minus,
-        "*" => FlagType::Mul,
-        "/" => FlagType::Div,
-        "==" => FlagType::EQ,
-        "~=" => FlagType::NEQ,
-        "<=" => FlagType::LEQ,
-        ">=" => FlagType::GEQ,
-        "<" => FlagType::LESS,
-        ">" => FlagType::GREATER,
-        "." => FlagType::Dot,
-        "..." => FlagType::ThreeDot
+        ";"   =>  FlagType::Semi,
+        "="   =>  FlagType::Assign,
+        ","   =>  FlagType::Comma,
+        "("   =>  FlagType::LParen,
+        ")"   =>  FlagType::RParen,
+        "["   =>  FlagType::LCrotchet,
+        "]"   =>  FlagType::RCrotchet,
+        "{"   =>  FlagType::LBrace,
+        "}"   =>  FlagType::RBrace,
+        "+"   =>  FlagType::Plus,
+        "-"   =>  FlagType::Minus,
+        "*"   =>  FlagType::Mul,
+        "/"   =>  FlagType::Div,
+        "=="  =>  FlagType::EQ,
+        "~="  =>  FlagType::NEQ,
+        "<="  =>  FlagType::LEQ,
+        ">="  =>  FlagType::GEQ,
+        "<"   =>  FlagType::LESS,
+        ">"   =>  FlagType::GREATER,
+        "."   =>  FlagType::Dot,
+        "..." =>  FlagType::TripleDot
         
     }
 }
-

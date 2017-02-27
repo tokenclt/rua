@@ -25,7 +25,7 @@ impl RegisterAlloc {
                     Some(&reg) => reg,
                     None => {
                         self.name_indexer.insert(name.to_string(), self.counter);
-                        self.counter += 1;
+                        self.increament_count();
                         self.counter - 1
                     }
                 }
@@ -33,7 +33,7 @@ impl RegisterAlloc {
             None => {
                 self.name_indexer.insert("__TEMP__".to_string() + &self.counter.to_string(),
                                          self.counter);
-                self.counter += 1;
+                self.increament_count();
                 self.counter - 1
             }  
         }
@@ -49,6 +49,13 @@ impl RegisterAlloc {
 
     pub fn size(&self) -> Usize {
         self.counter
+    }
+
+    fn increament_count(&mut self) {
+        self.counter += 1;
+        if self.counter > 0xFF {
+            panic!("Register number overflow");
+        }
     }
 }
 
@@ -67,6 +74,9 @@ impl ConstAlloc {
     }
 
     pub fn push(&mut self, val: ConstType) -> Usize {
+        if self.storage.len() >= 0xFF {
+            panic!("Const value number overflow");
+        }
         match val {
             ConstType::Str(ref s) => {
                 if let Some(&final_pos) = self.str_index.get(s) {

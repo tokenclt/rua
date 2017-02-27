@@ -3,6 +3,11 @@ use std::collections::HashMap;
 use super::opcodes::OpMode;
 use super::opcodes::OpName;
 
+pub type Usize = u32;
+/// jump label
+pub type Label = i32;
+pub const LFIELDS_PER_FLUSH: u32 = 50;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum ConstType {
     Nil,
@@ -89,8 +94,6 @@ impl FunctionPrototype {
     }
 }
 
-pub type Label = i32;
-
 pub trait RemoveLabel {
     fn remove_label(&self) -> Vec<OpMode>;
 }
@@ -140,6 +143,7 @@ impl RemoveLabel for Vec<OpMode> {
     }
 }
 
+/// Convert const value to binary 
 pub trait ToBytecode {
     fn to_bytecode(&self) -> Vec<u32>;
 }
@@ -182,4 +186,13 @@ impl ToBytecode for String {
     }
 }
 
-pub type Usize = u32;
+/// convert u32 to f8
+pub trait ToF8{
+    fn to_f8(&self) -> u32;
+}
+
+impl ToF8 for usize {
+    fn to_f8(&self) -> u32 {
+        unimplemented!()
+    }
+}
