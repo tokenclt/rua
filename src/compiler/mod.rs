@@ -328,9 +328,9 @@ impl CodeGen {
                 match flag {
                     FlagType::Plus | FlagType::Minus | FlagType::Mul | FlagType::Div => {
                         let (is_temp, left_reg) =
-                            try!(self.visit_expr(left, res_alloc, instructions, None));
+                            self.reg_constid_merge(left, res_alloc, instructions, None)?;
                         let (_, right_reg) =
-                            try!(self.visit_expr(right, res_alloc, instructions, None));
+                            self.reg_constid_merge(right, res_alloc, instructions, None)?;
                         let op = self.flag_to_op.get(&flag).expect("BinOp not defined").clone();
                         // destructive op only generate for temp register
                         let (result_is_temp, result_reg) = if let Some(expect) =
@@ -357,7 +357,7 @@ impl CodeGen {
                 self.symbol_table.initialize_scope();
                 //  child function prototype should be wrapped in another scope
                 let function_prototype =
-                    try!(self.visit_function(function_body, Some(res_alloc), namelist, is_vararg));
+                    self.visit_function(function_body, Some(res_alloc), namelist, is_vararg)?;
                 self.symbol_table.finalize_scope();
                 //  push function prototype in function list
                 let func_pos = res_alloc.function_alloc.push(function_prototype.prototype);
@@ -403,7 +403,10 @@ impl CodeGen {
             Expr::TableCtor(ref entrys) => {
                 self.visit_table_ctor(entrys, res_alloc, instructions, expect)
             }
-            _ => unimplemented!(),
+            _ => {
+                println!("Unmatched expr: {:?}", expr);
+                unimplemented!();
+            }
         }
     }
 
@@ -800,8 +803,8 @@ impl CodeGen {
         }
         // add pairs in the hash_part
         for (key, value) in hash_part {
-            let key_rkc = self.reg_constid_merge(&key, res_alloc, instructions, None)?;
-            let value_rkc = self.reg_constid_merge(&value, res_alloc, instructions, None)?;
+            let (_, key_rkc) = self.reg_constid_merge(&key, res_alloc, instructions, None)?;
+            let (_, value_rkc) = self.reg_constid_merge(&value, res_alloc, instructions, None)?;
             CodeGen::emit_iABC(instructions,
                                OpName::SETTABLE,
                                result_reg,
@@ -864,14 +867,17 @@ impl CodeGen {
                          res_alloc: &mut ResourceAlloc,
                          instructions: &mut Vec<OpMode>,
                          expect: Option<Expect>)
-                         -> Result<u32, CompileError> {
+                         -> Result<(bool, u32), CompileError> {
         let reg_or_const = match expr {
             &Expr::Var(Var::Name(ref name)) => {
-                0x100 | res_alloc.const_alloc.push(ConstType::Str(name.clone()))
+                (false, 0x100 | res_alloc.const_alloc.push(ConstType::Str(name.clone())))
             }
-            &Expr::Num(num) => 0x100 | res_alloc.const_alloc.push(ConstType::Real(num)),
-            &Expr::Boole(boolean) => 0x100 | res_alloc.const_alloc.push(ConstType::Boole(boolean)), 
-            _ => self.visit_expr(expr, res_alloc, instructions, expect)?.1,
+            &Expr::Num(num) => (false, 0x100 | res_alloc.const_alloc.push(ConstType::Real(num))),
+            &Expr::Boole(boolean) => {
+                (false, 0x100 | res_alloc.const_alloc.push(ConstType::Boole(boolean)))
+            } 
+            &Expr::Str(ref s) => (false, 0x100 | res_alloc.const_alloc.push(ConstType::Str(s.clone()))),
+            _ => self.visit_expr(expr, res_alloc, instructions, expect)?,
         };
         Ok(reg_or_const)
     }
@@ -883,7 +889,7 @@ pub mod tests {
     use parser::Parser;
     use std::str::Chars;
     #[test]
-    fn global_arith() {
+    pub fn global_arith() {
         let ast = Parser::<Chars>::ast_from_text(&String::from("\
             a, b = 2.5 , 2 * 4
             local c = (a + b) / 10.5

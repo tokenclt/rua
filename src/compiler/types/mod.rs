@@ -2,6 +2,7 @@ use std::mem::transmute;
 use std::collections::HashMap;
 use super::opcodes::OpMode;
 use super::opcodes::OpName;
+use super::opcodes::mask_1;
 
 pub type Usize = u32;
 /// jump label
@@ -101,7 +102,7 @@ pub trait RemoveLabel {
 impl RemoveLabel for Vec<OpMode> {
     // FIXME: what if normal jump exist
     fn remove_label(&self) -> Vec<OpMode> {
-        //println!("Before remove: {:?}", self);
+        // println!("Before remove: {:?}", self);
         // pass one: remove label and build index
         let mut label_removed = vec![];
         let mut index = HashMap::new();
@@ -143,7 +144,7 @@ impl RemoveLabel for Vec<OpMode> {
     }
 }
 
-/// Convert const value to binary 
+/// Convert const value to binary
 pub trait ToBytecode {
     fn to_bytecode(&self) -> Vec<u32>;
 }
@@ -187,12 +188,51 @@ impl ToBytecode for String {
 }
 
 /// convert u32 to f8
-pub trait ToF8{
+/// byte floating representation of size
+pub trait ToF8 {
     fn to_f8(&self) -> u32;
 }
 
 impl ToF8 for usize {
     fn to_f8(&self) -> u32 {
-        unimplemented!()
+        assert!(*self < u32::max_value() as usize, "usize is too large, can not convert to byte float");
+
+        let source = *self as u32;
+        let power = 32 - source.leading_zeros() - 1;
+        let (mag, exp) = if power >= 4 {
+            let fract_4 = source & mask_1(4, power - 4);
+            let mag = if fract_4 & 1 == 1 {
+                (fract_4 >> 1) + 1
+            } else {
+                fract_4 >> 1
+            };
+            (mag, power - 2)
+        } else {
+            let mag = source & mask_1(3, 0);
+            (mag, if power >= 2 {power - 2} else {0})
+        };
+
+        (exp << 3) | mag
+    }
+}
+
+pub mod tests{
+    use super::*;
+
+    #[test]
+    pub fn test_utils() {
+        let num_0 = 2_usize;
+        let num_1 = 4_usize;
+        let num_2 = 7_usize;
+        let num_3 = 8_usize;
+        let num_5 = 21_usize;
+        let num_4 = 20_usize;
+        
+        assert_eq!(num_0.to_f8(), 2_u32);
+        assert_eq!(num_1.to_f8(), 4_u32);
+        assert_eq!(num_2.to_f8(), 7_u32);
+        assert_eq!(num_3.to_f8(), 8_u32);
+        assert_eq!(num_4.to_f8(), 18_u32);
+        assert_eq!(num_5.to_f8(), 19_u32);
     }
 }
