@@ -203,6 +203,11 @@ impl<'a, Tit> Parser<'a, Tit>
         if let Some(token) = self.peek_clone() {
             match token {
                 // recurse
+                Token::Flag(FlagType::LCrotchet) => {
+                    let (table_name, _) = prefix;
+                    let table_ref = self.table_ref_comp(table_name)?;
+                    self.prefixexp_expand((table_ref, PrefixExp::Var))
+                }
                 Token::Flag(FlagType::Semi) => unimplemented!(),
                 Token::Flag(FlagType::Dot) => unimplemented!(),
                 _ => Ok(prefix),
@@ -226,14 +231,18 @@ impl<'a, Tit> Parser<'a, Tit>
                     let node = Expr::FunctionCall(Box::new(prefix), args, is_vararg);
                     Ok((node, PrefixExp::FuncCall))
                 }
+                // Name '[' exp ']'
+                Token::Flag(FlagType::LCrotchet) => {
+                    Ok((self.table_ref_comp(prefix)?, PrefixExp::Var))
+                }
                 // Name ':' Name args
                 Token::Flag(FlagType::Semi) => unimplemented!(),
                 Token::Flag(FlagType::Dot) => unimplemented!(),
                 // no expansion performed
-                _ => Ok((prefix, PrefixExp::Var)),
+                _ => Ok((prefix, PrefixExp::Name)),
             }
         } else {
-            Ok((prefix, PrefixExp::Var))
+            Ok((prefix, PrefixExp::Name))
         }
     }
 
@@ -285,17 +294,6 @@ impl<'a, Tit> Parser<'a, Tit>
                         Ok(Stat::Empty)
                     }
                     Token::Flag(FlagType::Local) => self.assign_local(),
-                    Token::Name(_) => {
-                        // back up current position
-                        // let it_backup = self.token_iter.clone();
-                        // try parse by rule: assign list of expr to list of name
-                        match self.assign() {
-                            Ok(stat) => Ok(stat),
-                            // if failed , parse by rule: assign function
-                            Err(ParserError::ExpectationUnmeet) => unimplemented!(),
-                            e @ _ => e,
-                        }
-                    }
                     Token::Flag(FlagType::If) => self.if_else_clause(),
                     // do not handle
                     Token::Flag(FlagType::Else) |
@@ -311,7 +309,7 @@ impl<'a, Tit> Parser<'a, Tit>
                     //  return an error , this will stop parsing block
                     Token::Flag(FlagType::End) => Err(ParserError::ExpectationUnmeet),
                     Token::Flag(FlagType::EOF) => Err(ParserError::ExpectationUnmeet),
-                    _ => unimplemented!(),
+                    _ => self.assign(),
                 }
             } else {
                 Err(ParserError::SyntaxError)
@@ -365,24 +363,24 @@ impl<'a, Tit> Parser<'a, Tit>
 
     /// rule: var: Name | PrefixExpr |
     fn var(&mut self) -> Result<Var, ParserError> {
-        // FIXME: Name[''] ?
-        if let Some(Token::Name(name)) = self.peek_clone() {
-            self.eat(FlagType::Name).unwrap();
-            Ok(Var::Name(name))
-        } else {
-            self.prefixexp().and_then(|(expr, cat)| {
-                if cat == PrefixExp::Var {
-                    Ok(Var::PrefixExp(Box::new(expr)))
-                } else {
-                    Err(ParserError::SyntaxError)
+        self.prefixexp().and_then(|(expr, cat)| {
+            match cat {
+                PrefixExp::Name => {
+                    if let Expr::Var(Var::Name(name)) = expr {
+                        Ok(Var::Name(name))
+                    } else {
+                        panic!("Auxiliary type info is inconsistent");
+                    }
                 }
-            })
-        }
+                PrefixExp::Var => Ok(Var::PrefixExp(Box::new(expr))),
+                _ => Err(ParserError::SyntaxError),
+            }
+        })
     }
 
     /// rule: varlist Name { Comma Name}
     fn varlist(&mut self) -> Result<Vec<Var>, ParserError> {
-        let mut var = try!(self.var());
+        let mut var = self.var()?;
         let mut list = vec![var];
         while let Some(token) = self.peek_clone() {
             match token {
@@ -634,6 +632,7 @@ impl<'a, Tit> Parser<'a, Tit>
     }
 }
 
+// table operations
 impl<'a, Tit> Parser<'a, Tit>
     where Tit: iter::Iterator<Item = char> + Clone
 {
@@ -693,5 +692,14 @@ impl<'a, Tit> Parser<'a, Tit>
             }
         };
         Ok(entry)
+    }
+
+    // build table reference syntax from provided table Exp
+    // table_ref ::= Exp '[ Expr ']'
+    fn table_ref_comp(&mut self, expr: Expr) -> Result<Expr, ParserError> {
+        self.eat(FlagType::LCrotchet).unwrap();
+        let refer_field = self.expr()?;
+        self.eat(FlagType::RCrotchet)?;
+        Ok(Expr::TableRef(Box::new(expr), Box::new(refer_field)))
     }
 }

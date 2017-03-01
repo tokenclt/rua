@@ -138,20 +138,25 @@ impl CodeGen {
                                 None => {
                                     let const_pos = self.prepare_global_value(name, res_alloc); /* add name to const list and define global symbol */
                                     let (_, reg) =
-                                        self.visit_expr(expr, res_alloc, instructions, None)?;
+                                        self.visit_r_expr(expr, res_alloc, instructions, None)?;
                                     CodeGen::emit_iABx(instructions,
                                                        OpName::SETGLOBAL,
                                                        reg,
                                                        const_pos);
                                 }
                                 Some((SymbolScope::Local, pos)) => {
-                                    self.visit_expr(expr,
-                                                    res_alloc,
-                                                    instructions,
-                                                    Some(Expect::Reg(pos)))?;
+                                    self.visit_r_expr(expr,
+                                                      res_alloc,
+                                                      instructions,
+                                                      Some(Expect::Reg(pos)))?;
                                 }
                                 Some((SymbolScope::UpValue(_), _)) => unimplemented!(),
                             }
+                        }
+                        Var::PrefixExp(ref prefix_expr) => {
+                            let (_, value_creg) =
+                                self.reg_constid_merge(expr, res_alloc, instructions, None)?;
+                            self.visit_l_expr(prefix_expr, value_creg, res_alloc, instructions)?;
                         }
                         _ => unimplemented!(),
                     }
@@ -162,7 +167,7 @@ impl CodeGen {
             Stat::AssignLocal(ref namelist, ref exprlist) => {
                 let (namelist, exprlist) =
                     self.adjust_list(namelist, exprlist, res_alloc, instructions)?;
-                let reg_list = self.visit_exprlist(&exprlist, res_alloc, instructions)?;
+                let reg_list = self.visit_r_exprlist(&exprlist, res_alloc, instructions)?;
                 for (ref name, (is_temp, expr_reg)) in namelist.into_iter()
                     .zip(reg_list.into_iter()) {
                     if is_temp {
@@ -185,7 +190,7 @@ impl CodeGen {
                 let start_register = if ret_num > 0 { reg_list[0] } else { 0 };
                 // second: visit each expr with expect return register
                 for (expr, reg) in exprlist.into_iter().zip(reg_list.into_iter()) {
-                    try!(self.visit_expr(expr, res_alloc, instructions, Some(Expect::Reg(reg))));
+                    try!(self.visit_r_expr(expr, res_alloc, instructions, Some(Expect::Reg(reg))));
                 }
                 // return statement
                 // if B == 1, no expr returned
@@ -265,9 +270,9 @@ impl CodeGen {
                 //      exposed as local
                 let local_reg = res_alloc.reg_alloc.push(Some(name));
                 self.symbol_table.define_local(name, local_reg);
-                self.visit_expr(start, res_alloc, &mut raw, Some(Expect::Reg(start_reg)))?;
-                self.visit_expr(end, res_alloc, &mut raw, Some(Expect::Reg(end_reg)))?;
-                self.visit_expr(step, res_alloc, &mut raw, Some(Expect::Reg(step_reg)))?;
+                self.visit_r_expr(start, res_alloc, &mut raw, Some(Expect::Reg(start_reg)))?;
+                self.visit_r_expr(end, res_alloc, &mut raw, Some(Expect::Reg(end_reg)))?;
+                self.visit_r_expr(step, res_alloc, &mut raw, Some(Expect::Reg(step_reg)))?;
                 raw.push(OpMode::rForPrep(start_reg, test_label));
                 raw.push(OpMode::Label(block_label));
                 // set exit
@@ -295,12 +300,12 @@ impl CodeGen {
 
     /// ret: (is_temp, a register hold the value)
     /// expect: where the result should be stored or how many result should be returned
-    fn visit_expr(&mut self,
-                  expr: &Expr,
-                  res_alloc: &mut ResourceAlloc,
-                  instructions: &mut Vec<OpMode>,
-                  expect: Option<Expect>)
-                  -> Result<(bool, Usize), CompileError> {
+    fn visit_r_expr(&mut self,
+                    expr: &Expr,
+                    res_alloc: &mut ResourceAlloc,
+                    instructions: &mut Vec<OpMode>,
+                    expect: Option<Expect>)
+                    -> Result<(bool, Usize), CompileError> {
         match *expr {
             Expr::Num(num) => {
                 let const_pos = res_alloc.const_alloc.push(ConstType::Real(num));
@@ -396,18 +401,50 @@ impl CodeGen {
             Expr::UnaryOp(op, ref left) => {
                 match op {
                     FlagType::Minus => unimplemented!(),
-                    FlagType::Plus => self.visit_expr(left, res_alloc, instructions, expect),
+                    FlagType::Plus => self.visit_r_expr(left, res_alloc, instructions, expect),
                     _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
                 }
             }
             Expr::TableCtor(ref entrys) => {
                 self.visit_table_ctor(entrys, res_alloc, instructions, expect)
             }
+            Expr::TableRef(ref table, ref key) => {
+                let reg = if let Some(expect) = extract_expect_reg(expect)? {
+                    expect
+                } else {
+                    res_alloc.reg_alloc.push(None)
+                };
+                let (_, table_reg) = self.visit_r_expr(table, res_alloc, instructions, None)?;
+                let (_, key_creg) = self.reg_constid_merge(key, res_alloc, instructions, None)?;
+                CodeGen::emit_iABC(instructions, OpName::GETTABLE, reg, table_reg, key_creg);
+                Ok((true, reg))
+            }
             _ => {
                 println!("Unmatched expr: {:?}", expr);
                 unimplemented!();
             }
         }
+    }
+
+    fn visit_l_expr(&mut self,
+                    expr: &Expr,
+                    value_creg: u32,
+                    res_alloc: &mut ResourceAlloc,
+                    instructions: &mut Vec<OpMode>)
+                    -> Result<(), CompileError> {
+        match *expr {
+            Expr::TableRef(ref table, ref key) => {
+                let (_, table_reg) = self.visit_r_expr(table, res_alloc, instructions, None)?;
+                let (_, key_creg) = self.reg_constid_merge(key, res_alloc, instructions, None)?;
+                CodeGen::emit_iABC(instructions,
+                                   OpName::SETTABLE,
+                                   table_reg,
+                                   key_creg,
+                                   value_creg);
+            }
+            _ => unimplemented!(),
+        }
+        Ok(())
     }
 
     fn visit_logic_arith(&mut self,
@@ -483,8 +520,8 @@ impl CodeGen {
                     FlagType::LESS | FlagType::LEQ | FlagType::GREATER | FlagType::GEQ |
                     FlagType::EQ | FlagType::NEQ => {
                         let mut raw = vec![];
-                        let (_, left_reg) = self.visit_expr(left, res_alloc, &mut raw, None)?;
-                        let (_, right_reg) = self.visit_expr(right, res_alloc, &mut raw, None)?;
+                        let (_, left_reg) = self.visit_r_expr(left, res_alloc, &mut raw, None)?;
+                        let (_, right_reg) = self.visit_r_expr(right, res_alloc, &mut raw, None)?;
                         let (op_name, test_bool) = match op {
                             FlagType::LESS => (OpName::LT, true),
                             FlagType::LEQ => (OpName::LE, true),
@@ -546,13 +583,13 @@ impl CodeGen {
         }
     }
 
-    fn visit_exprlist(&mut self,
-                      exprlist: &Vec<Expr>,
-                      res_alloc: &mut ResourceAlloc,
-                      instructions: &mut Vec<OpMode>)
-                      -> Result<Vec<(bool, u32)>, CompileError> {
+    fn visit_r_exprlist(&mut self,
+                        exprlist: &Vec<Expr>,
+                        res_alloc: &mut ResourceAlloc,
+                        instructions: &mut Vec<OpMode>)
+                        -> Result<Vec<(bool, u32)>, CompileError> {
         let reg_list = exprlist.into_iter()
-            .map(|expr| self.visit_expr(expr, res_alloc, instructions, None))
+            .map(|expr| self.visit_r_expr(expr, res_alloc, instructions, None))
             .filter(|r| r.is_ok())
             .map(|r| r.unwrap())
             .collect::<Vec<_>>();
@@ -631,7 +668,7 @@ impl CodeGen {
         // todo: vararg
         // get function name
         let func_pos = res_alloc.reg_alloc.push(None);
-        self.visit_expr(expr, res_alloc, instructions, Some(Expect::Reg(func_pos)))?;
+        self.visit_r_expr(expr, res_alloc, instructions, Some(Expect::Reg(func_pos)))?;
         let ret_field: u32;
         let arg_field: u32;
 
@@ -656,10 +693,10 @@ impl CodeGen {
             if let Expr::FunctionCall(ref expr, ref args, is_vararg) = args[args.len() - 1] {
                 for i in 0..(args.len() - 1) {
                     // make sure the args are continous
-                    self.visit_expr(&args[i],
-                                    res_alloc,
-                                    instructions,
-                                    Some(Expect::Reg(args_reg)))?;
+                    self.visit_r_expr(&args[i],
+                                      res_alloc,
+                                      instructions,
+                                      Some(Expect::Reg(args_reg)))?;
                     args_reg += 1;
                 }
                 self.visit_function_call(expr,
@@ -671,7 +708,7 @@ impl CodeGen {
                 arg_field = 0; // Indeterminate arg number
             } else {
                 for expr in args {
-                    self.visit_expr(expr, res_alloc, instructions, Some(Expect::Reg(args_reg)))?;
+                    self.visit_r_expr(expr, res_alloc, instructions, Some(Expect::Reg(args_reg)))?;
                     args_reg += 1;
                 }
                 arg_field = args.len() as u32 + 1;
@@ -772,10 +809,10 @@ impl CodeGen {
             // reuse register pool in each flush
             let mut dest_reg = result_reg + 1;
             for _ in 0..LFIELDS_PER_FLUSH {
-                self.visit_expr(&iter.next().unwrap(),
-                                res_alloc,
-                                instructions,
-                                Some(Expect::Reg(dest_reg)))?;
+                self.visit_r_expr(&iter.next().unwrap(),
+                                  res_alloc,
+                                  instructions,
+                                  Some(Expect::Reg(dest_reg)))?;
                 dest_reg += 1;
             }
             // FIXME: consider when flush_id is too large to encode
@@ -788,10 +825,10 @@ impl CodeGen {
         // then finish residue part
         let mut dest_reg = result_reg + 1;
         for _ in 0..residue_num {
-            self.visit_expr(&iter.next().unwrap(),
-                            res_alloc,
-                            instructions,
-                            Some(Expect::Reg(dest_reg)))?;
+            self.visit_r_expr(&iter.next().unwrap(),
+                              res_alloc,
+                              instructions,
+                              Some(Expect::Reg(dest_reg)))?;
             dest_reg += 1;
         }
         if residue_num > 0 {
@@ -876,8 +913,10 @@ impl CodeGen {
             &Expr::Boole(boolean) => {
                 (false, 0x100 | res_alloc.const_alloc.push(ConstType::Boole(boolean)))
             } 
-            &Expr::Str(ref s) => (false, 0x100 | res_alloc.const_alloc.push(ConstType::Str(s.clone()))),
-            _ => self.visit_expr(expr, res_alloc, instructions, expect)?,
+            &Expr::Str(ref s) => {
+                (false, 0x100 | res_alloc.const_alloc.push(ConstType::Str(s.clone())))
+            }
+            _ => self.visit_r_expr(expr, res_alloc, instructions, expect)?,
         };
         Ok(reg_or_const)
     }
@@ -915,7 +954,7 @@ pub mod tests {
         assert_eq!(compiler.compile(&ast), Ok(()));
     }
 
-    #[test]
+    // #[test]
     pub fn function_call() {
         let ast = Parser::<Chars>::ast_from_text(&String::from("\
             local a = 2
@@ -1002,12 +1041,27 @@ pub mod tests {
         assert_eq!(compiler.compile(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
-    // #[test]
+    #[test]
     pub fn table_constructor() {
         let ast = Parser::<Chars>::ast_from_text(&String::from("\
             local table = { name = 'Ann', age = 10 + 8, 
                            ['sch' + 'ool'] = 'SEIEE';  
                            1, 2, 3 }
+        "))
+            .expect("Parse Error");
+        let mut compiler = CodeGen::new();
+        println!("Ast: {:?}", ast);
+        assert_eq!(compiler.compile(&ast), Ok(()));
+        println!("Byte code: {:?}", compiler.root_function);
+    }
+    // #[test]
+    pub fn set_get_table() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+            local table = { name = 'Ann' }
+            (table)['age'] = 12
+            table['subtable'] = { 1, 2 }
+            local a, n, sub = table['age'], table['name'], 
+                              table['subtable'][1]
         "))
             .expect("Parse Error");
         let mut compiler = CodeGen::new();

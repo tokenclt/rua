@@ -190,14 +190,17 @@ impl ToBytecode for String {
 /// convert u32 to f8
 /// byte floating representation of size
 pub trait ToF8 {
-    fn to_f8(&self) -> u32;
+    fn to_f8(self) -> u32;
 }
 
 impl ToF8 for usize {
-    fn to_f8(&self) -> u32 {
-        assert!(*self < u32::max_value() as usize, "usize is too large, can not convert to byte float");
+    fn to_f8(self) -> u32 {
+        assert!(self < u32::max_value() as usize, "usize is too large, can not convert to byte float");
+        if self == 0 {
+            return self as u32;
+        }
 
-        let source = *self as u32;
+        let source = self as u32;
         let power = 32 - source.leading_zeros() - 1;
         let (mag, exp) = if power >= 4 {
             let fract_4 = source & mask_1(4, power - 4);

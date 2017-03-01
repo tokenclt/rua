@@ -6,5 +6,5 @@ mod compiler;
 
 use compiler::tests;
 fn main() {
-    tests::table_constructor();
+    tests::set_get_table();
 }

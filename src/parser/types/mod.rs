@@ -18,6 +18,8 @@ pub enum Expr {
     FunctionCall(Box<Expr>, Vec<Expr>, bool),
     // vector of expr '=' expr
     TableCtor(Vec<TableEntry>),
+    // Exp[Exp]
+    TableRef(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -52,6 +54,7 @@ pub enum PrefixExp {
     FuncCall,
     Var,
     Other,
+    Name,
 }
 
 #[derive(Clone, Debug, PartialEq)]
