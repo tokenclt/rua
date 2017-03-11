@@ -85,7 +85,7 @@ impl<'a, Tit> TokenIterator<'a, Tit>
         // Look for longer operator first
         let max_operator_length = 3;
         let n_char_sym: String = self.text_iter.clone().take(max_operator_length).collect();
-        for len in (1..(n_char_sym.len()+1)).rev() {            
+        for len in (1..(n_char_sym.len() + 1)).rev() {
             if let Some(&sym) = self.operators.get(&n_char_sym[0..len]) {
                 // advance original iterator
                 let _ = self.text_iter.by_ref().take(len).count();
@@ -153,11 +153,21 @@ impl<'a, Tit> iter::Iterator for TokenIterator<'a, Tit>
                 Some(&ch) if ch.is_alphabetic() || ch == '_' => {
                     return Some(self.handle_identifier())
                 }
-                Some(&ch) if ch.is_numeric() || ch == '.' => {
+                Some(&ch) if ch.is_numeric()  => {
                     return if let Ok(token) = self.handle_number() {
                         Some(token)
                     } else {
                         None
+                    }
+                }
+                // FIXME: urgent! Add lexer buffer to eliminate clone iter
+                Some(&ch) if ch == '.' => {
+                    if let Some(next_ch) = self.text_iter.clone().skip(1).next(){
+                        if !next_ch.is_numeric() {
+                            return self.handle_operator().ok();
+                        } else {
+                            return self.handle_number().ok();
+                        }
                     }
                 }
                 Some(&ch) if ch == '-' => {
@@ -226,7 +236,8 @@ mod tests {
         let text_2 = "a, number = 0, 1
             str = \"this is a string\"
             b, c = true, false
-        ".to_string();
+        "
+            .to_string();
         let mut token_it_2 = lexer.tokenize(text_2.chars());
 
         assert_eq!(token_it_2.next(), Some(Token::Name("a".to_string())));
@@ -239,19 +250,40 @@ mod tests {
         assert_eq!(token_it_2.next(), Some(Token::Num(1f64)));
         assert_eq!(token_it_2.next(), Some(Token::Name("str".to_string())));
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Assign)));
-        assert_eq!(token_it_2.next(), Some(Token::Str("this is a string".to_string())));
+        assert_eq!(token_it_2.next(),
+                   Some(Token::Str("this is a string".to_string())));
 
         assert_eq!(token_it_2.next(), Some(Token::Name("b".to_string())));
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Comma)));
         assert_eq!(token_it_2.next(), Some(Token::Name("c".to_string())));
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Assign)));
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::True)));
-                
+
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Comma)));
-        assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::False)));       
+        assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::False)));
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::EOF)));
         assert_eq!(token_it_2.next(), None);
 
     }
 
+    #[test]
+    fn blank_line() {
+        let text = "\
+            a = 1
+
+            b = 2
+        "
+            .to_string();
+
+        let lexer =  Lexer::new();
+        let mut it =lexer.tokenize(text.chars());
+
+        assert_eq!(it.next(), Some(Token::Name("a".to_string())));
+        assert_eq!(it.next(), Some(Token::Flag(FlagType::Assign)));
+        assert_eq!(it.next(), Some(Token::Num(1f64)));
+
+        assert_eq!(it.next(), Some(Token::Name("b".to_string())));
+        assert_eq!(it.next(), Some(Token::Flag(FlagType::Assign)));
+        assert_eq!(it.next(), Some(Token::Num(2f64)));
+    }
 }

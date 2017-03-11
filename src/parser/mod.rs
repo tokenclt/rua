@@ -30,6 +30,7 @@ impl<'a, Tit> Parser<'a, Tit>
     }
 
     fn peek_clone(&mut self) -> Option<Token> {
+        // println!("{:?}", self.token_iter.peek());
         self.token_iter.peek().map(|t| t.clone())
     }
 
@@ -85,8 +86,12 @@ impl<'a, Tit> Parser<'a, Tit>
                     Ok(Expr::Boole(true))
                 }
                 Token::Flag(FlagType::False) => {
-                    self.eat(FlagType::False);
+                    self.eat(FlagType::False).unwrap();
                     Ok(Expr::Boole(false))
+                }
+                Token::Flag(FlagType::Nil) => {
+                    self.eat(FlagType::Nil).unwrap();
+                    Ok(Expr::Nil)
                 }
                 _ => Err(ParserError::SyntaxError),
             }
@@ -171,8 +176,8 @@ impl<'a, Tit> Parser<'a, Tit>
     }
 
 
-    /// rule: prefixexp ::= var | functioncall | '(' expr ')'
-    /// ret: (prefixexp, FuncCall or Var)
+    /// rule: prefixexp ::= var | GeneralCall | '(' expr ')'
+    /// ret: (prefixexp, GeneralCall or Var)
     fn prefixexp(&mut self) -> Result<(Expr, PrefixExp), ParserError> {
         // look forward (1)
         let prefix = match self.peek_clone().unwrap() {
@@ -189,14 +194,32 @@ impl<'a, Tit> Parser<'a, Tit>
                 let node = Expr::Var(Var::Name(name));
                 self.name_complement(node)?
             }
-            _ => panic!("Token won't be used by prefixexp"),
+            _ => panic!("Token won't be used by prefixexp: {:?}", self.peek_clone()),
         };
+        // println!("Prefix: {:?}", prefix);
         self.prefixexp_expand(prefix)
     }
 
-    /// expend prefixexp with ':' '[' '.'
+    /// Convert PrefixExp(Exp::Var(Var::Name)) to Var::Name
+    /// leave other unchanged
+    fn strip_prefixexp_to_var(&self, expr: Expr, cat: PrefixExp) -> Result<Var, ParserError> {
+        match cat {
+            PrefixExp::Name => {
+                if let Expr::Var(Var::Name(name)) = expr {
+                    Ok(Var::Name(name))
+                } else {
+                    panic!("Auxiliary type info is inconsistent");
+                }
+            }
+            PrefixExp::Var => Ok(Var::PrefixExp(Box::new(expr))),
+            _ => Err(ParserError::SyntaxError),
+        }
+    }
+
+    /// expend prefixexp with ':' '[' '.' '('
     /// if can not expand
     /// original prefix is returned (epsilon)
+    /// Notice: '(' is the terminal expension
     fn prefixexp_expand(&mut self,
                         prefix: (Expr, PrefixExp))
                         -> Result<(Expr, PrefixExp), ParserError> {
@@ -205,19 +228,40 @@ impl<'a, Tit> Parser<'a, Tit>
                 // recurse
                 Token::Flag(FlagType::LCrotchet) => {
                     let (table_name, _) = prefix;
-                    let table_ref = self.table_ref_comp(table_name)?;
+                    let table_ref = self.table_crotchet_ref(table_name)?;
                     self.prefixexp_expand((table_ref, PrefixExp::Var))
                 }
-                Token::Flag(FlagType::Semi) => unimplemented!(),
-                Token::Flag(FlagType::Dot) => unimplemented!(),
-                _ => Ok(prefix),
+                Token::Flag(FlagType::Colon) => {
+                    let (table_name, _) = prefix;
+                    Ok((self.table_colon_call(table_name)?, PrefixExp::ColonCall))
+                    // Stop expend
+                }
+                Token::Flag(FlagType::Dot) => {
+                    let (table_name, _) = prefix;
+                    let table_ref = self.table_dot_ref(table_name)?;
+                    self.prefixexp_expand((table_ref, PrefixExp::Var))
+                }
+                Token::Flag(FlagType::LParen) => {
+                    // TODO: extract as func_call()
+                    //       or maybe merge with stat ::= function funcname args
+                    self.eat(FlagType::LParen).unwrap();
+                    let (args, is_vararg) = self.arglist()?;
+                    self.eat(FlagType::RParen)?;
+                    let (func_name, _) = prefix;
+                    let node = Expr::GeneralCall(Box::new(func_name), args, is_vararg);
+                    Ok((node, PrefixExp::GeneralCall))
+                }
+                _ => {
+                    //println!("Name unchanged");
+                    Ok(prefix)
+                }
             }
         } else {
             Ok(prefix)
         }
     }
 
-    /// try parse complement form (e.g. ':' , '[')
+    /// try parse complement form (e.g. ':' , '[', '(')
     /// and combine complement form with prefix
     /// if no complement is found, original_prefix is returned
     fn name_complement(&mut self, prefix: Expr) -> Result<(Expr, PrefixExp), ParserError> {
@@ -227,17 +271,19 @@ impl<'a, Tit> Parser<'a, Tit>
                 Token::Flag(FlagType::LParen) => {
                     self.eat(FlagType::LParen).unwrap();
                     let (args, is_vararg) = self.arglist()?;
-                    try!(self.eat(FlagType::RParen));
-                    let node = Expr::FunctionCall(Box::new(prefix), args, is_vararg);
-                    Ok((node, PrefixExp::FuncCall))
+                    self.eat(FlagType::RParen)?;
+                    let node = Expr::GeneralCall(Box::new(prefix), args, is_vararg);
+                    Ok((node, PrefixExp::GeneralCall))
                 }
                 // Name '[' exp ']'
                 Token::Flag(FlagType::LCrotchet) => {
-                    Ok((self.table_ref_comp(prefix)?, PrefixExp::Var))
+                    Ok((self.table_crotchet_ref(prefix)?, PrefixExp::Var))
                 }
                 // Name ':' Name args
-                Token::Flag(FlagType::Semi) => unimplemented!(),
-                Token::Flag(FlagType::Dot) => unimplemented!(),
+                Token::Flag(FlagType::Colon) => {
+                    Ok((self.table_colon_call(prefix)?, PrefixExp::ColonCall))
+                }
+                Token::Flag(FlagType::Dot) => Ok((self.table_dot_ref(prefix)?, PrefixExp::Var)),
                 // no expansion performed
                 _ => Ok((prefix, PrefixExp::Name)),
             }
@@ -309,7 +355,7 @@ impl<'a, Tit> Parser<'a, Tit>
                     //  return an error , this will stop parsing block
                     Token::Flag(FlagType::End) => Err(ParserError::ExpectationUnmeet),
                     Token::Flag(FlagType::EOF) => Err(ParserError::ExpectationUnmeet),
-                    _ => self.assign(),
+                    _ => self.assign_or_funcall(),
                 }
             } else {
                 Err(ParserError::SyntaxError)
@@ -328,11 +374,39 @@ impl<'a, Tit> Parser<'a, Tit>
 
     }
 
+    fn assign_or_funcall(&mut self) -> Result<Stat, ParserError> {
+        let (prefix_expr, prefix_type) = self.prefixexp()?;
+        match prefix_type {
+            PrefixExp::GeneralCall => {
+                if let Expr::GeneralCall(func_name, args, is_vararg) = prefix_expr {
+                    Ok(Stat::GeneralCall(func_name, args, is_vararg))
+                } else {
+                    panic!("Auxiliary type info is inconsistent");
+                }
+            }
+            PrefixExp::ColonCall => {
+                if let Expr::ColonCall(table_name, func_name, args, is_vararg) = prefix_expr {
+                    Ok(Stat::ColonCall(table_name, func_name, args, is_vararg))
+                } else {
+                    panic!("Auxiliary type info is inconsistent");
+                }
+            }
+            PrefixExp::Var | PrefixExp::Name => {
+                let var = self.strip_prefixexp_to_var(prefix_expr, prefix_type)?;
+                self.assign(var)
+            }
+            _ => {
+                println!("Neither funcall nor var {:?}", prefix_expr);
+                Err(ParserError::SyntaxError)
+            }
+        }
+    }
+
     /// rule: assign: Varlist = Exprlist
-    fn assign(&mut self) -> Result<Stat, ParserError> {
-        let mut varlist = try!(self.varlist());
+    fn assign(&mut self, first_var: Var) -> Result<Stat, ParserError> {
+        let mut varlist = self.varlist(first_var)?;
         if let Ok(_) = self.eat(FlagType::Assign) {
-            let mut exprlist = try!(self.exprlist());
+            let mut exprlist = self.exprlist()?;
             Ok(Stat::Assign(varlist, exprlist))
         } else {
             Err(ParserError::ExpectationUnmeet)
@@ -342,9 +416,9 @@ impl<'a, Tit> Parser<'a, Tit>
     /// rule : assign_local : Local Namelist = Exprlist
     fn assign_local(&mut self) -> Result<Stat, ParserError> {
         self.eat(FlagType::Local).unwrap();
-        let namelist = try!(self.namelist());
+        let namelist = self.namelist()?;
         if let Ok(_) = self.eat(FlagType::Assign) {
-            let exprlist = try!(self.exprlist());
+            let exprlist = self.exprlist()?;
             Ok(Stat::AssignLocal(namelist, exprlist))
         } else {
             // just declaration
@@ -363,30 +437,18 @@ impl<'a, Tit> Parser<'a, Tit>
 
     /// rule: var: Name | PrefixExpr |
     fn var(&mut self) -> Result<Var, ParserError> {
-        self.prefixexp().and_then(|(expr, cat)| {
-            match cat {
-                PrefixExp::Name => {
-                    if let Expr::Var(Var::Name(name)) = expr {
-                        Ok(Var::Name(name))
-                    } else {
-                        panic!("Auxiliary type info is inconsistent");
-                    }
-                }
-                PrefixExp::Var => Ok(Var::PrefixExp(Box::new(expr))),
-                _ => Err(ParserError::SyntaxError),
-            }
-        })
+        self.prefixexp().and_then(|(expr, cat)| self.strip_prefixexp_to_var(expr, cat))
     }
 
-    /// rule: varlist Name { Comma Name}
-    fn varlist(&mut self) -> Result<Vec<Var>, ParserError> {
-        let mut var = self.var()?;
-        let mut list = vec![var];
+    /// rule: varlist ::= Var { Comma Name}
+    fn varlist(&mut self, first_var: Var) -> Result<Vec<Var>, ParserError> {
+        let mut list = vec![first_var];
+
         while let Some(token) = self.peek_clone() {
             match token {
                 Token::Flag(FlagType::Comma) => {
                     self.eat(FlagType::Comma).unwrap();
-                    var = try!(self.var());
+                    let var = self.var()?;
                     list.push(var);
                 }
                 _ => break,
@@ -694,12 +756,29 @@ impl<'a, Tit> Parser<'a, Tit>
         Ok(entry)
     }
 
-    // build table reference syntax from provided table Exp
-    // table_ref ::= Exp '[ Expr ']'
-    fn table_ref_comp(&mut self, expr: Expr) -> Result<Expr, ParserError> {
+    /// build table reference syntax from provided table Exp
+    /// table_ref ::= Exp '[ Expr ']'
+    fn table_crotchet_ref(&mut self, expr: Expr) -> Result<Expr, ParserError> {
         self.eat(FlagType::LCrotchet).unwrap();
         let refer_field = self.expr()?;
         self.eat(FlagType::RCrotchet)?;
         Ok(Expr::TableRef(Box::new(expr), Box::new(refer_field)))
+    }
+
+    fn table_dot_ref(&mut self, expr: Expr) -> Result<Expr, ParserError> {
+        self.eat(FlagType::Dot).unwrap();
+        let refer_name = self.name()?;
+        Ok(Expr::TableRef(Box::new(expr), Box::new(Expr::Var(Var::Name(refer_name)))))
+    }
+
+    /// given table_name: Expr and peeked a ':'
+    /// parse a colon call
+    fn table_colon_call(&mut self, table_name: Expr) -> Result<Expr, ParserError> {
+        self.eat(FlagType::Colon).unwrap();
+        let func_name = self.name()?;
+        self.eat(FlagType::LParen)?;
+        let (args, is_vararg) = self.arglist()?;
+        self.eat(FlagType::RParen)?;
+        Ok(Expr::ColonCall(Box::new(table_name),func_name,  args, is_vararg))
     }
 }

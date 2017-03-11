@@ -10,12 +10,14 @@ pub enum Expr {
     Boole(bool),
     Var(Var),
     Str(String),
+    Nil,
     BinOp(FlagType, Box<Expr>, Box<Expr>),
     UnaryOp(FlagType, Box<Expr>),
     // named paras and has_unnamed
     FunctionDef((Vec<Name>, bool), Box<Block>),
     // evaluating the expr yields the name of function, args, is_vararg
-    FunctionCall(Box<Expr>, Vec<Expr>, bool),
+    GeneralCall(Box<Expr>, Vec<Expr>, bool),
+    ColonCall(Box<Expr>, Name, Vec<Expr>, bool),
     // vector of expr '=' expr
     TableCtor(Vec<TableEntry>),
     // Exp[Exp]
@@ -46,12 +48,13 @@ pub enum Var {
     Reg(u32),
 }
 
-// if a prefixexp is ended by '(' ... ')', FuncCall
+// if a prefixexp is ended by '(' ... ')', GeneralCall
 // if ended by '[' Name ']', '.' Name, Name, Var
 // else other
 #[derive(Debug, PartialEq)]
 pub enum PrefixExp {
-    FuncCall,
+    GeneralCall,
+    ColonCall,
     Var,
     Other,
     Name,
@@ -68,6 +71,8 @@ pub enum Stat {
     While(Box<Expr>, Box<Block>),
     ForRange(Vec<Name>, Vec<Expr>, Box<Block>),
     ForNumeric(Name, Box<Expr>, Box<Expr>, Box<Expr>, Box<Block>),
+    GeneralCall(Box<Expr>, Vec<Expr>, bool),
+    ColonCall(Box<Expr>, Name, Vec<Expr>, bool),
     Ret(Vec<Expr>),
 }
 

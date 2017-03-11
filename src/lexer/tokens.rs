@@ -41,9 +41,10 @@ pub enum FlagType {
     Function,
     Return,
 
-    Semi, // ';'
+    Semi,   // ';'
+    Colon,  // ':'
     Assign, // '='
-    Comma, // ','
+    Comma,  // ','
     LParen,
     RParen,
     LCrotchet,
@@ -109,6 +110,7 @@ pub fn get_keyword_table() -> HashMap<String, FlagType> {
 pub fn get_operator_table() -> HashMap<String, FlagType> {
     map!{
         ";"   =>  FlagType::Semi,
+        ":"   =>  FlagType::Colon,
         "="   =>  FlagType::Assign,
         ","   =>  FlagType::Comma,
         "("   =>  FlagType::LParen,

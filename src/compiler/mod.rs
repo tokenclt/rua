@@ -6,6 +6,7 @@ use parser::types::*;
 use lexer::tokens::FlagType;
 use std::collections::HashMap;
 use std::ptr;
+use std::cmp;
 
 pub mod symbol_table;
 pub mod resource_allocator;
@@ -125,7 +126,7 @@ impl CodeGen {
                 //       trim varlist and exprlist into equal length and
                 //       return new varlist and exprlist
                 //       this method will generate load nill instruction
-                //       and have a special handler for functioncall
+                //       and have a special handler for GeneralCall
                 //       loadnill should be performed at the end
                 let (varlist, exprlist) =
                     self.adjust_list(varlist, exprlist, res_alloc, instructions)?;
@@ -294,6 +295,25 @@ impl CodeGen {
                     Err(CompileError::SyntexError)
                 }
             }
+            Stat::GeneralCall(ref func_name, ref args, is_vararg) => {
+                self.visit_general_call(func_name,
+                                        args,
+                                        is_vararg,
+                                        RetExpect::Num(0),
+                                        res_alloc,
+                                        instructions)
+                    .and(Ok(()))
+            }
+            Stat::ColonCall(ref table_expr, ref func_name, ref args, is_vararg) => {
+                self.visit_colon_call(table_expr,
+                                      func_name,
+                                      args,
+                                      is_vararg,
+                                      RetExpect::Num(0),
+                                      res_alloc,
+                                      instructions)
+                    .and(Ok(()))
+            }
             _ => unimplemented!(),
         }
     }
@@ -307,6 +327,15 @@ impl CodeGen {
                     expect: Option<Expect>)
                     -> Result<(bool, Usize), CompileError> {
         match *expr {
+            Expr::Nil => {
+                let reg = if let Some(expect) = extract_expect_reg(expect)? {
+                    expect
+                } else {
+                    res_alloc.reg_alloc.push(None)
+                };
+                CodeGen::emit_iABx(instructions, OpName::LOADNIL, reg, reg);
+                Ok((true, reg))
+            }
             Expr::Num(num) => {
                 let const_pos = res_alloc.const_alloc.push(ConstType::Real(num));
                 let reg = if let Some(expect) = extract_expect_reg(expect)? {
@@ -325,6 +354,16 @@ impl CodeGen {
                     res_alloc.reg_alloc.push(None)
                 };
                 CodeGen::emit_iABC(instructions, OpName::LOADBOOL, reg, bit, 0);
+                Ok((true, reg))
+            }
+            Expr::Str(ref s) => {
+                let const_pos = res_alloc.const_alloc.push(ConstType::Str(s.clone()));
+                let reg = if let Some(expect) = extract_expect_reg(expect)? {
+                    expect
+                } else {
+                    res_alloc.reg_alloc.push(None)
+                };
+                CodeGen::emit_iABx(instructions, OpName::LOADK, reg, const_pos);
                 Ok((true, reg))
             }
             Expr::BinOp(flag, ref left, ref right) => {
@@ -353,6 +392,13 @@ impl CodeGen {
                     }
                     _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
 
+                }
+            }
+            Expr::UnaryOp(op, ref left) => {
+                match op {
+                    FlagType::Minus => unimplemented!(),
+                    FlagType::Plus => self.visit_r_expr(left, res_alloc, instructions, expect),
+                    _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
                 }
             }
             Expr::Var(ref var) => {
@@ -389,40 +435,27 @@ impl CodeGen {
                 }
                 Ok((true, reg))
             }
-            Expr::FunctionCall(ref expr, ref args, is_vararg) => {
-                let central_reg = self.visit_function_call(expr,
-                                         args,
-                                         is_vararg,
-                                         RetExpect::Num(1),
-                                         res_alloc,
-                                         instructions)?;
+            Expr::GeneralCall(ref expr, ref args, is_vararg) => {
+                let central_reg = self.visit_general_call(expr,
+                                        args,
+                                        is_vararg,
+                                        RetExpect::Num(1),
+                                        res_alloc,
+                                        instructions)?;
                 Ok((true, central_reg))
             }
-            Expr::UnaryOp(op, ref left) => {
-                match op {
-                    FlagType::Minus => unimplemented!(),
-                    FlagType::Plus => self.visit_r_expr(left, res_alloc, instructions, expect),
-                    _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
-                }
-            }
+            Expr::ColonCall(ref table_expr, ref func_name, ref args, is_vararg) => unimplemented!(),
+
             Expr::TableCtor(ref entrys) => {
                 self.visit_table_ctor(entrys, res_alloc, instructions, expect)
             }
             Expr::TableRef(ref table, ref key) => {
-                let reg = if let Some(expect) = extract_expect_reg(expect)? {
-                    expect
-                } else {
-                    res_alloc.reg_alloc.push(None)
-                };
-                let (_, table_reg) = self.visit_r_expr(table, res_alloc, instructions, None)?;
-                let (_, key_creg) = self.reg_constid_merge(key, res_alloc, instructions, None)?;
-                CodeGen::emit_iABC(instructions, OpName::GETTABLE, reg, table_reg, key_creg);
-                Ok((true, reg))
+                self.visit_table_ref(table, key, res_alloc, instructions, expect)
             }
-            _ => {
-                println!("Unmatched expr: {:?}", expr);
-                unimplemented!();
-            }
+            // _ => {
+            //     println!("Unmatched expr: {:?}", expr);
+            //     unimplemented!();
+            // }
         }
     }
 
@@ -657,25 +690,25 @@ impl CodeGen {
         }
     }
 
-    fn visit_function_call(&mut self,
-                           expr: &Expr,
-                           args: &Vec<Expr>,
-                           is_vararg: bool,
-                           expect_ret: RetExpect,
-                           res_alloc: &mut ResourceAlloc,
-                           instructions: &mut Vec<OpMode>)
-                           -> Result<u32, CompileError> {
+    fn visit_general_call(&mut self,
+                          expr: &Expr,
+                          args: &Vec<Expr>,
+                          is_vararg: bool,
+                          expect_ret: RetExpect,
+                          res_alloc: &mut ResourceAlloc,
+                          instructions: &mut Vec<OpMode>)
+                          -> Result<u32, CompileError> {
         // todo: vararg
         // get function name
         let func_pos = res_alloc.reg_alloc.push(None);
-        self.visit_r_expr(expr, res_alloc, instructions, Some(Expect::Reg(func_pos)))?;
         let ret_field: u32;
         let arg_field: u32;
 
+        // allocate register
         match expect_ret {
             RetExpect::Num(ret_num) => {
                 // allocate register
-                for _ in 0..ret_num {
+                for _ in 0..(cmp::max(ret_num, args.len() as u32)) {
                     res_alloc.reg_alloc.push(None);
                 }
                 ret_field = ret_num + 1;
@@ -684,38 +717,106 @@ impl CodeGen {
                 ret_field = 0;
             }
         }
-
-        // in case of underflow
-        if args.len() == 0 {
-            arg_field = 1;
-        } else {
-            let mut args_reg = func_pos + 1;
-            if let Expr::FunctionCall(ref expr, ref args, is_vararg) = args[args.len() - 1] {
-                for i in 0..(args.len() - 1) {
-                    // make sure the args are continous
-                    self.visit_r_expr(&args[i],
-                                      res_alloc,
-                                      instructions,
-                                      Some(Expect::Reg(args_reg)))?;
-                    args_reg += 1;
-                }
-                self.visit_function_call(expr,
-                                         args,
-                                         is_vararg,
-                                         RetExpect::Indeterminate,
-                                         res_alloc,
-                                         instructions)?;
-                arg_field = 0; // Indeterminate arg number
-            } else {
-                for expr in args {
-                    self.visit_r_expr(expr, res_alloc, instructions, Some(Expect::Reg(args_reg)))?;
-                    args_reg += 1;
-                }
-                arg_field = args.len() as u32 + 1;
-            }
-        }
+        self.visit_r_expr(expr, res_alloc, instructions, Some(Expect::Reg(func_pos)))?;
+        arg_field = self.visit_args(args, func_pos, res_alloc, instructions)?;
         CodeGen::emit_iABC(instructions, OpName::CALL, func_pos, arg_field, ret_field);
         Ok(func_pos)
+    }
+
+    fn visit_colon_call(&mut self,
+                        table_expr: &Expr,
+                        func_name: &Name,
+                        args: &Vec<Expr>,
+                        is_vararg: bool,
+                        expect_ret: RetExpect,
+                        res_alloc: &mut ResourceAlloc,
+                        instructions: &mut Vec<OpMode>)
+                        -> Result<u32, CompileError> {
+        // make
+        let func_pos = res_alloc.reg_alloc.push(None);
+        let table_pos = res_alloc.reg_alloc.push(None);
+        let ret_field: u32;
+        let arg_field: u32;
+        // allocate registers
+        match expect_ret {
+            RetExpect::Num(ret_num) => {
+                for _ in 0..(cmp::max(ret_num, args.len() as u32)) {
+                    res_alloc.reg_alloc.push(None);
+                }
+                ret_field = ret_num + 1;
+            }
+            RetExpect::Indeterminate => {
+                ret_field = 0;
+            }
+        }
+        self.visit_r_expr(table_expr,
+                          res_alloc,
+                          instructions,
+                          Some(Expect::Reg(table_pos)))?;
+        let (_, name_pos) = self.reg_constid_merge(&Expr::Var(Var::Name(func_name.clone())),
+                               res_alloc,
+                               instructions,
+                               None)?;
+        CodeGen::emit_iABC(instructions, OpName::SELF, func_pos, table_pos, name_pos);
+        arg_field = match self.visit_args(args, func_pos, res_alloc, instructions)? {
+            0 => 0,
+            i @ _ => i + 1,
+        };
+        CodeGen::emit_iABC(instructions, OpName::CALL, func_pos, arg_field, ret_field);
+        Ok(func_pos)
+    }
+
+    fn visit_args(&mut self,
+                  args: &Vec<Expr>,
+                  func_pos: u32,
+                  res_alloc: &mut ResourceAlloc,
+                  instructions: &mut Vec<OpMode>)
+                  -> Result<u32, CompileError> {
+        let mut args_reg = func_pos + 1;
+        let arg_field;
+        if args.is_empty() {
+            return Ok(1);
+        }
+        if let Expr::GeneralCall(ref t_func, ref t_args, t_is_vararg) = args[args.len() - 1] {
+            for i in 0..(args.len() - 1) {
+                self.visit_r_expr(&args[i],
+                                  res_alloc,
+                                  instructions,
+                                  Some(Expect::Reg(args_reg)))?;
+                args_reg += 1;
+            }
+            self.visit_general_call(t_func,
+                                    t_args,
+                                    t_is_vararg,
+                                    RetExpect::Indeterminate,
+                                    res_alloc,
+                                    instructions)?;
+            arg_field = 0;
+        } else if let Expr::ColonCall(ref t_table, ref t_func_name, ref t_args, t_is_vararg) =
+                      args[args.len() - 1] {
+            for i in 0..(args.len() - 1) {
+                self.visit_r_expr(&args[i],
+                                  res_alloc,
+                                  instructions,
+                                  Some(Expect::Reg(args_reg)))?;
+                args_reg += 1;
+            }
+            self.visit_colon_call(t_table,
+                                  t_func_name,
+                                  t_args,
+                                  t_is_vararg,
+                                  RetExpect::Indeterminate,
+                                  res_alloc,
+                                  instructions)?;
+            arg_field = 0;
+        } else {
+            for expr in args {
+                self.visit_r_expr(expr, res_alloc, instructions, Some(Expect::Reg(args_reg)))?;
+                args_reg += 1;
+            }
+            arg_field = args.len() as u32 + 1;
+        }
+        Ok(arg_field)
     }
 
     fn adjust_list<T: Clone>(&mut self,
@@ -739,13 +840,13 @@ impl CodeGen {
         // imbalanced & one function call
         else {
             if exprlist.len() == 1 {
-                if let Expr::FunctionCall(ref expr, ref args, is_vararg) = exprlist[0] {
-                    let central_reg = self.visit_function_call(expr,
-                                             args,
-                                             is_vararg,
-                                             RetExpect::Num(varlist.len() as u32),
-                                             res_alloc,
-                                             instructions)?;
+                if let Expr::GeneralCall(ref expr, ref args, is_vararg) = exprlist[0] {
+                    let central_reg = self.visit_general_call(expr,
+                                            args,
+                                            is_vararg,
+                                            RetExpect::Num(varlist.len() as u32),
+                                            res_alloc,
+                                            instructions)?;
                     let expr_regs = (central_reg..(central_reg + varlist.len() as u32))
                         .map(|reg| Expr::Var(Var::Reg(reg)))
                         .collect();
@@ -764,6 +865,24 @@ impl CodeGen {
             CodeGen::emit_iABx(instructions, OpName::LOADNIL, start_reg, num - 1);
             return Ok((varlist.clone(), extended));
         }
+    }
+
+    fn visit_table_ref(&mut self,
+                       table: &Expr,
+                       key: &Expr,
+                       res_alloc: &mut ResourceAlloc,
+                       instructions: &mut Vec<OpMode>,
+                       expect: Option<Expect>)
+                       -> Result<(bool, u32), CompileError> {
+        let reg = if let Some(expect) = extract_expect_reg(expect)? {
+            expect
+        } else {
+            res_alloc.reg_alloc.push(None)
+        };
+        let (_, table_reg) = self.visit_r_expr(table, res_alloc, instructions, None)?;
+        let (_, key_creg) = self.reg_constid_merge(key, res_alloc, instructions, None)?;
+        CodeGen::emit_iABC(instructions, OpName::GETTABLE, reg, table_reg, key_creg);
+        Ok((true, reg))
     }
 
     fn visit_table_ctor(&mut self,
@@ -1054,7 +1173,7 @@ pub mod tests {
         assert_eq!(compiler.compile(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
-    // #[test]
+    #[test]
     pub fn set_get_table() {
         let ast = Parser::<Chars>::ast_from_text(&String::from("\
             local table = { name = 'Ann' }
@@ -1062,6 +1181,29 @@ pub mod tests {
             table['subtable'] = { 1, 2 }
             local a, n, sub = table['age'], table['name'], 
                               table['subtable'][1]
+        "))
+            .expect("Parse Error");
+        let mut compiler = CodeGen::new();
+        println!("Ast: {:?}", ast);
+        assert_eq!(compiler.compile(&ast), Ok(()));
+        println!("Byte code: {:?}", compiler.root_function);
+    }
+    // #[test]
+    pub fn table_func() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+            table = nil --Bypass
+            local stu = {name='Ann', grades={'A', 'A-', 'B+'}}
+
+            stu.change_name = function(self)
+                self.name = 'Lee'
+            end
+
+            stu.grades.add_grade = function(self, g)
+                table.insert(self, g)
+            end
+
+            stu.change_name(stu)
+            stu.grades:add_grade('C')
         "))
             .expect("Parse Error");
         let mut compiler = CodeGen::new();
