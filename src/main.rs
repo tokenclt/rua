@@ -6,5 +6,5 @@ mod compiler;
 
 use compiler::tests;
 fn main() {
-    tests::table_func();
+    // tests::table_func();
 }

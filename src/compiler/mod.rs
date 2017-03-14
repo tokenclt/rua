@@ -1188,7 +1188,7 @@ pub mod tests {
         assert_eq!(compiler.compile(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
-    // #[test]
+    #[test]
     pub fn table_func() {
         let ast = Parser::<Chars>::ast_from_text(&String::from("\
             table = nil --Bypass
