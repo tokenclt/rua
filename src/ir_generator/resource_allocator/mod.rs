@@ -99,35 +99,35 @@ impl ConstAlloc {
         self.storage.len()
     }
 
-    pub fn dump(&self) -> Vec<Usize> {
-        let mut const_list = Vec::<u32>::new();
-        //  size of constant list
-        const_list.push(self.size() as Usize);
-        for val in &self.storage {
-            match *val {
-                ConstType::Nil => {
-                    //  type 0 = Nil
-                    const_list.push(0);
-                }
-                ConstType::Boole(b) => {
-                    //  type 1 = Boolean
-                    const_list.push(1);
-                    const_list.push(b as u32);
-                }
-                ConstType::Real(num) => {
-                    //  type 2 = Number
-                    const_list.push(2);
-                    const_list.append(&mut num.to_bytecode());
-                }
-                ConstType::Str(ref s) => {
-                    const_list.push(3);
-                    // type 3 = string
-                    const_list.push(s.len() as Usize);
-                    const_list.append(&mut s.to_bytecode());
-                }
-            }
-        }
-        const_list
+    pub fn dump(self) -> Vec<ConstType> {
+        // let mut const_list = Vec::<u32>::new();
+        // //  size of constant list
+        // const_list.push(self.size() as Usize);
+        // for val in &self.storage {
+        //     match *val {
+        //         ConstType::Nil => {
+        //             //  type 0 = Nil
+        //             const_list.push(0);
+        //         }
+        //         ConstType::Boole(b) => {
+        //             //  type 1 = Boolean
+        //             const_list.push(1);
+        //             const_list.push(b as u32);
+        //         }
+        //         ConstType::Real(num) => {
+        //             //  type 2 = Number
+        //             const_list.push(2);
+        //             const_list.append(&mut num.to_bytecode());
+        //         }
+        //         ConstType::Str(ref s) => {
+        //             const_list.push(3);
+        //             // type 3 = string
+        //             const_list.append(&mut s.to_bytecode());
+        //         }
+        //     }
+        // } */
+        // const_list
+        self.storage
     }
 }
 

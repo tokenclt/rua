@@ -33,6 +33,10 @@ impl CodeGen {
     pub fn compile(&mut self, ast: &Node) -> Result<(), CompileError> {
         self.visit_unit(ast)
     }
+
+    pub fn get_chunk(&self) -> &FunctionChunk {
+        &self.root_function
+    }
 }
 
 // visit method
@@ -73,20 +77,19 @@ impl CodeGen {
         //  visit body instuctions
         self.visit_block(block, &mut res_alloc, &mut instructions)?;
         // add a return, may be redundant
-        CodeGen::emit_iABx(&mut instructions, OpName::RETURN, 0, 1);
+        CodeGen::emit_iABC(&mut instructions, OpName::RETURN, 0, 1, 0);
         // number of upvalues
         func_chunk.upvalue_num = res_alloc.upvalue_alloc.size() as Usize;
         // number of parameters
         func_chunk.para_num = paras.len() as Usize;
         func_chunk.is_vararg = is_vararg;
         // maximum stack size ( number of register used )
-        func_chunk.stack_size = res_alloc.reg_alloc.size();
+        func_chunk.stack_size = cmp::max(res_alloc.reg_alloc.size(), MIN_STACK_SIZE);
         // list of instructions
         //    size
         func_chunk.ins_len = instructions.len() as Usize;
         //    instructions
-        //  replace label with number
-        func_chunk.instructions = instructions.remove_label();
+        func_chunk.instructions = instructions;
         // list of constants
         func_chunk.constants = res_alloc.const_alloc.dump();
         // list of function prototypes
@@ -196,10 +199,11 @@ impl CodeGen {
                 // return statement
                 // if B == 1, no expr returned
                 // if B >= 1 return R(start_register) .. R(start_register + B - 2)
-                CodeGen::emit_iABx(instructions,
+                CodeGen::emit_iABC(instructions,
                                    OpName::RETURN,
                                    start_register,
-                                   (ret_num + 1) as u32);
+                                   (ret_num + 1) as u32,
+                                   0);
                 Ok(())
             }
             Stat::IfElse(ref test_expr, ref then_block, ref else_block) => {

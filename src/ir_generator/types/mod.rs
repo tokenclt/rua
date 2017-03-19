@@ -1,5 +1,6 @@
 use std::mem::transmute;
 use std::collections::HashMap;
+use std::iter::Iterator;
 use super::opcodes::OpMode;
 use super::opcodes::OpName;
 use super::opcodes::mask_1;
@@ -8,6 +9,7 @@ pub type Usize = u32;
 /// jump label
 pub type Label = i32;
 pub const LFIELDS_PER_FLUSH: u32 = 50;
+pub const MIN_STACK_SIZE: Usize = 2;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ConstType {
@@ -53,13 +55,15 @@ pub enum CompileError {
 
 #[derive(Debug)]
 pub struct FunctionChunk {
+    pub first_line: Usize,
+    pub last_line: Usize,
     pub upvalue_num: Usize,
     pub para_num: Usize,
     pub is_vararg: bool,
     pub stack_size: Usize,
     pub ins_len: Usize,
     pub instructions: Vec<OpMode>,
-    pub constants: Vec<u32>, // encoded constant list
+    pub constants: Vec<ConstType>, // encoded constant list
     pub funclist_len: Usize,
     pub function_prototypes: Vec<FunctionChunk>,
 }
@@ -67,6 +71,8 @@ pub struct FunctionChunk {
 impl FunctionChunk {
     pub fn new() -> FunctionChunk {
         FunctionChunk {
+            first_line: 0,
+            last_line: 0,
             upvalue_num: 0,
             para_num: 0,
             is_vararg: true,
@@ -95,55 +101,6 @@ impl FunctionPrototype {
     }
 }
 
-pub trait RemoveLabel {
-    fn remove_label(&self) -> Vec<OpMode>;
-}
-
-impl RemoveLabel for Vec<OpMode> {
-    // FIXME: what if normal jump exist
-    fn remove_label(&self) -> Vec<OpMode> {
-        // println!("Before remove: {:?}", self);
-        // pass one: remove label and build index
-        let mut label_removed = vec![];
-        let mut index = HashMap::new();
-        let mut pos_counter: i32 = 0;
-        for ins in self {
-            match ins {
-                &OpMode::Label(label) => {
-                    index.insert(label, pos_counter);
-                }
-                _ => {
-                    label_removed.push(ins);
-                    pos_counter += 1;
-                }
-            }
-        }
-        // pass two: replace label with number
-        let mut replaced = vec![];
-        for (pos, ins) in label_removed.iter().enumerate() {
-            match **ins {
-                OpMode::rJMP(ref label) => {
-                    // TODO: negative jmp
-                    let num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
-                    if num != 0 {
-                        replaced.push(OpMode::iAsBx(OpName::JMP, 0, num));
-                    }
-                }
-                OpMode::rForPrep(reg, ref label) => {
-                    let num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
-                    replaced.push(OpMode::iAsBx(OpName::FORPREP, reg, num));
-                }
-                OpMode::rForLoop(reg, ref label) => {
-                    let num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
-                    replaced.push(OpMode::iAsBx(OpName::FORLOOP, reg, num));
-                }
-                _ => replaced.push((*ins).clone()),
-            }
-        }
-        replaced
-    }
-}
-
 /// Convert const value to binary
 pub trait ToBytecode {
     fn to_bytecode(&self) -> Vec<u32>;
@@ -161,14 +118,16 @@ impl ToBytecode for f64 {
 
 impl ToBytecode for String {
     fn to_bytecode(&self) -> Vec<u32> {
-        let len = self.as_bytes().len();
-        let mut bits = vec![];
+        let mut with_zero = self.clone().into_bytes();
+        with_zero.push(0);
+        let len = with_zero.len() as u32;
+        let mut bits = vec![len];
         //  complete u32, residue u32
         let (complete, residue) = (len / 4, len % 4);
-        let mut byte_iter = self.as_bytes().iter();
+        let mut byte_iter = with_zero.iter();
         for _ in 0..complete {
             let mut bitpattern: [u8; 4] = [0; 4];
-            for byte in &mut bitpattern {
+            for byte in &mut bitpattern.iter_mut() {
                 *byte = *byte_iter.next().unwrap();
             }
             unsafe {
@@ -181,7 +140,7 @@ impl ToBytecode for String {
             let mut residue_bits = byte_iter.fold(0_u32, |bytes, &byte| (bytes << 8) | byte as u32);
             // left zero pading
             residue_bits = residue_bits << (8 * (4 - residue));
-            bits.push(residue_bits);
+            bits.push(residue_bits.swap_bytes());
         }
         bits
     }
@@ -195,7 +154,8 @@ pub trait ToF8 {
 
 impl ToF8 for usize {
     fn to_f8(self) -> u32 {
-        assert!(self < u32::max_value() as usize, "usize is too large, can not convert to byte float");
+        assert!(self < u32::max_value() as usize,
+                "usize is too large, can not convert to byte float");
         if self == 0 {
             return self as u32;
         }
@@ -212,14 +172,14 @@ impl ToF8 for usize {
             (mag, power - 2)
         } else {
             let mag = source & mask_1(3, 0);
-            (mag, if power >= 2 {power - 2} else {0})
+            (mag, if power >= 2 { power - 2 } else { 0 })
         };
 
         (exp << 3) | mag
     }
 }
 
-pub mod tests{
+pub mod tests {
     use super::*;
 
     #[test]
@@ -230,7 +190,7 @@ pub mod tests{
         let num_3 = 8_usize;
         let num_5 = 21_usize;
         let num_4 = 20_usize;
-        
+
         assert_eq!(num_0.to_f8(), 2_u32);
         assert_eq!(num_1.to_f8(), 4_u32);
         assert_eq!(num_2.to_f8(), 7_u32);

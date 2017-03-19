@@ -39,7 +39,7 @@ pub enum OpMode {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
 pub enum OpName {
     // Name           Opcode      Description
     MOVE, //          0           R(A) := R(B)
@@ -134,7 +134,8 @@ impl OpcodeBuilder {
 
     pub fn iAsBx(op: OpName, A: u32, sBx: i32) -> u32 {
         // trancate
-        let trancated: u32 = ((sBx << ((32 - SIZE_Bx) as u32)) as u32) >> ((32 - SIZE_Bx) as u32);
+        let bias = 0x1ffff_u32;
+        let trancated = ((sBx as u32) + bias) & 0x3ffff_u32;
         if A > mask_1(SIZE_A, 0) {
             panic!("Instuction parameter overflow");
         }
@@ -156,5 +157,12 @@ mod tests {
     fn test_opcode_generator() {
         // loadk 0 1
         assert_eq!(OpcodeBuilder::iABx(OpName::LOADK, 0, 1), 0x00004001_u32);
+        assert_eq!(OpcodeBuilder::iABC(OpName::RETURN, 0, 1, 0), 0x0080001e_u32);        
+        assert_eq!(OpcodeBuilder::iABC(OpName::RETURN, 3, 4, 0), 0x020000de_u32);
+        assert_eq!(OpcodeBuilder::iABx(OpName::LOADK, 1, 1), 0x00004041_u32);
+        assert_eq!(OpcodeBuilder::iABC(OpName::ADD, 2, 0, 1), 0x0000408c_u32);
+        assert_eq!(OpcodeBuilder::iABC(OpName::LT, 0, 1, 0), 0x00800018_u32);
+        assert_eq!(OpcodeBuilder::iAsBx(OpName::JMP, 0, 1), 0x80000016_u32);
+
     }
 }

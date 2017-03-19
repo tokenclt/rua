@@ -1,7 +1,7 @@
 use interpreter::{Variable, InterpretError};
 use parser::types::{Expr, Node, Stat, Var, Block};
 use lexer::tokens::FlagType;
-use compiler::symbol_table::ScopedSymbolTableBuilder;
+use ir_generator::symbol_table::ScopedSymbolTableBuilder;
 
 use std::collections::HashMap;
 
