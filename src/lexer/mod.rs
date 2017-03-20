@@ -1,4 +1,5 @@
 pub mod tokens;
+pub mod buffer;
 
 use std::iter;
 use std::str;
@@ -6,6 +7,7 @@ use std::collections::HashMap;
 use std::clone::Clone;
 use std::cmp::max;
 use self::tokens::*;
+use self::buffer::Buffer;
 
 #[derive(Debug)]
 pub enum TokenizeError {
@@ -40,7 +42,7 @@ pub struct TokenIterator<'a, Tit>
 {
     /// A simple ToIterator
     /// used as an iterator
-    text_iter: iter::Peekable<Tit>,
+    buffer: Buffer<Tit>,
     is_ended: bool,
     keywords: &'a HashMap<String, FlagType>,
     operators: &'a HashMap<String, FlagType>,
@@ -54,7 +56,7 @@ impl<'a, Tit> TokenIterator<'a, Tit>
            st: &'a HashMap<String, FlagType>)
            -> TokenIterator<'a, Tit> {
         TokenIterator {
-            text_iter: it.peekable(),
+            buffer: Buffer::<Tit>::new(it),
             is_ended: false,
             keywords: kt,
             operators: st,
@@ -65,8 +67,8 @@ impl<'a, Tit> TokenIterator<'a, Tit>
         where F: Fn(char) -> bool
     {
         let mut v = String::new();
-        while let Some((true, c)) = self.text_iter.peek().map(|&c| (predicate(c), c)) {
-            self.text_iter.next();
+        while let Some((true, c)) = self.buffer.peek().map(|c| (predicate(c), c)) {
+            self.buffer.next();
             v.push(c);
         }
         v
@@ -84,11 +86,13 @@ impl<'a, Tit> TokenIterator<'a, Tit>
     fn handle_operator(&mut self) -> Result<Token, TokenizeError> {
         // Look for longer operator first
         let max_operator_length = 3;
-        let n_char_sym: String = self.text_iter.clone().take(max_operator_length).collect();
+        self.buffer.mark();
+        let n_char_sym: String = self.buffer.by_ref().take(max_operator_length).collect();
         for len in (1..(n_char_sym.len() + 1)).rev() {
             if let Some(&sym) = self.operators.get(&n_char_sym[0..len]) {
                 // advance original iterator
-                let _ = self.text_iter.by_ref().take(len).count();
+                self.buffer.rewind();
+                let _ = self.buffer.by_ref().take(len).count();
                 return Ok(Token::Flag(sym));
             }
         }
@@ -97,10 +101,10 @@ impl<'a, Tit> TokenIterator<'a, Tit>
 
     fn handle_string(&mut self) -> Result<Token, TokenizeError> {
         // skip starting quote and save for match
-        let start = self.text_iter.next().expect("This should never failed");
+        let start = self.buffer.next().expect("This should never failed");
         let string: String = self.consume_while(|c| c != start && c != '\n');
         //  skip ending
-        if let Some(start) = self.text_iter.next() {
+        if let Some(start) = self.buffer.next() {
             Ok(Token::Str(string))
         } else {
             Err(TokenizeError::Error)
@@ -117,8 +121,8 @@ impl<'a, Tit> TokenIterator<'a, Tit>
     }
 
     fn eat(&mut self, ch: char) -> Result<(), TokenizeError> {
-        if let Some(&ch) = self.text_iter.peek() {
-            self.text_iter.next();
+        if let Some(ch) = self.buffer.peek() {
+            self.buffer.next();
             Ok(())
         } else {
             Err(TokenizeError::Error)
@@ -126,8 +130,8 @@ impl<'a, Tit> TokenIterator<'a, Tit>
     }
 
     fn skip_comment(&mut self) {
-        while let Some(true) = self.text_iter.peek().map(|&c| c != '\n') {
-            self.text_iter.next();
+        while let Some(true) = self.buffer.peek().map(|c| c != '\n') {
+            self.buffer.next();
         }
         self.eat('\n').expect("Tokenizing failed");
     }
@@ -145,47 +149,52 @@ impl<'a, Tit> iter::Iterator for TokenIterator<'a, Tit>
         }
 
         loop {
-            match self.text_iter.peek() {
-                Some(&ch) if ch == ' ' || ch == '\n' => {
-                    self.text_iter.next();
+            match self.buffer.peek() {
+                Some(ch) if ch == ' ' || ch == '\n' => {
+                    self.buffer.next();
                     continue;
                 }
-                Some(&ch) if ch.is_alphabetic() || ch == '_' => {
+                Some(ch) if ch.is_alphabetic() || ch == '_' => {
                     return Some(self.handle_identifier())
                 }
-                Some(&ch) if ch.is_numeric()  => {
+                Some(ch) if ch.is_numeric() => {
                     return if let Ok(token) = self.handle_number() {
                         Some(token)
                     } else {
                         None
                     }
                 }
-                // FIXME: urgent! Add lexer buffer to eliminate clone iter
-                Some(&ch) if ch == '.' => {
-                    if let Some(next_ch) = self.text_iter.clone().skip(1).next(){
+                Some(ch) if ch == '.' => {
+                    self.buffer.mark();
+                    if let Some(next_ch) = self.buffer.by_ref().skip(1).next() {
                         if !next_ch.is_numeric() {
+                            self.buffer.rewind();
                             return self.handle_operator().ok();
                         } else {
+                            self.buffer.rewind();
                             return self.handle_number().ok();
                         }
                     }
                 }
-                Some(&ch) if ch == '-' => {
-                    if let Some('-') = self.text_iter.clone().skip(1).next() {
+                Some(ch) if ch == '-' => {
+                    self.buffer.mark();
+                    if let Some('-') = self.buffer.by_ref().skip(1).next() {
+                        self.buffer.rewind();
                         self.skip_comment();
                     } else {
-                        self.text_iter.next();
+                        self.buffer.rewind();
+                        self.buffer.next();
                         return Some(Token::Flag(FlagType::Minus));
                     }
                 }
-                Some(&ch) if ch == '\'' || ch == '\"' => {
+                Some(ch) if ch == '\'' || ch == '\"' => {
                     return if let Ok(string) = self.handle_string() {
                         Some(string)
                     } else {
                         None
                     }
                 }
-                Some(&_) => {
+                Some(_) => {
                     return if let Ok(token) = self.handle_operator() {
                         Some(token)
                     } else {
@@ -275,8 +284,8 @@ mod tests {
         "
             .to_string();
 
-        let lexer =  Lexer::new();
-        let mut it =lexer.tokenize(text.chars());
+        let lexer = Lexer::new();
+        let mut it = lexer.tokenize(text.chars());
 
         assert_eq!(it.next(), Some(Token::Name("a".to_string())));
         assert_eq!(it.next(), Some(Token::Flag(FlagType::Assign)));
