@@ -1,11 +1,11 @@
 mod lexer;
 mod parser;
-// mod semantic_analyzer;
-mod interpreter;
 mod ir_generator;
+mod bytecode_generator;
 mod assembler;
+mod compiler;
+// mod interpreter;
 
-use assembler::tests;
 fn main() {
-    tests::empty()
+    
 }

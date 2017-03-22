@@ -5,4 +5,4 @@ pub enum AsmError {
     LabelUndefined,
 }
 
-pub type BytecodeVec = Vec<u8>;
+pub type ByteCodeVec = Vec<u8>;

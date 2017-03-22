@@ -75,6 +75,7 @@ impl ScopedSymbolTableBuilder {
         unsafe {
             builder.current = builder.root_scope.as_mut() as *mut Scope;
         }
+        builder.add_std_funcs();
         builder
     }
 
@@ -139,5 +140,10 @@ impl ScopedSymbolTableBuilder {
         } else {
             None
         }
+    }
+    // FIXME: add dedicated std function names
+
+    fn add_std_funcs(&mut self) {
+        self.define_global("print");
     }
 }

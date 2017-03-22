@@ -14,23 +14,23 @@ pub mod opcodes;
 pub mod types;
 
 #[derive(Debug)]
-pub struct CodeGen {
+pub struct IRGen {
     symbol_table: ScopedSymbolTableBuilder,
     flag_to_op: HashMap<FlagType, OpName>,
     root_function: FunctionChunk,
 }
 
 // public interface
-impl CodeGen {
-    pub fn new() -> CodeGen {
-        CodeGen {
+impl IRGen {
+    pub fn new() -> IRGen {
+        IRGen {
             symbol_table: ScopedSymbolTableBuilder::new(),
             flag_to_op: get_opflag_opname_map(),
             root_function: FunctionChunk::new(),
         }
     }
 
-    pub fn compile(&mut self, ast: &Node) -> Result<(), CompileError> {
+    pub fn generate_ir(&mut self, ast: &Node) -> Result<(), CompileError> {
         self.visit_unit(ast)
     }
 
@@ -40,7 +40,7 @@ impl CodeGen {
 }
 
 // visit method
-impl CodeGen {
+impl IRGen {
     fn visit_unit(&mut self, node: &Node) -> Result<(), CompileError> {
         // TODO: add header
         // root block should not have retstat
@@ -77,7 +77,7 @@ impl CodeGen {
         //  visit body instuctions
         self.visit_block(block, &mut res_alloc, &mut instructions)?;
         // add a return, may be redundant
-        CodeGen::emit_iABC(&mut instructions, OpName::RETURN, 0, 1, 0);
+        IRGen::emit_iABC(&mut instructions, OpName::RETURN, 0, 1, 0);
         // number of upvalues
         func_chunk.upvalue_num = res_alloc.upvalue_alloc.size() as Usize;
         // number of parameters
@@ -143,10 +143,10 @@ impl CodeGen {
                                     let const_pos = self.prepare_global_value(name, res_alloc); /* add name to const list and define global symbol */
                                     let (_, reg) =
                                         self.visit_r_expr(expr, res_alloc, instructions, None)?;
-                                    CodeGen::emit_iABx(instructions,
-                                                       OpName::SETGLOBAL,
-                                                       reg,
-                                                       const_pos);
+                                    IRGen::emit_iABx(instructions,
+                                                     OpName::SETGLOBAL,
+                                                     reg,
+                                                     const_pos);
                                 }
                                 Some((SymbolScope::Local, pos)) => {
                                     self.visit_r_expr(expr,
@@ -180,7 +180,7 @@ impl CodeGen {
                     } else {
                         let pos = res_alloc.reg_alloc.push(Some(name));
                         self.symbol_table.define_local(name, pos);
-                        CodeGen::emit_iABx(instructions, OpName::MOVE, pos, expr_reg);
+                        IRGen::emit_iABx(instructions, OpName::MOVE, pos, expr_reg);
                     }
                 }
                 Ok(())
@@ -199,11 +199,11 @@ impl CodeGen {
                 // return statement
                 // if B == 1, no expr returned
                 // if B >= 1 return R(start_register) .. R(start_register + B - 2)
-                CodeGen::emit_iABC(instructions,
-                                   OpName::RETURN,
-                                   start_register,
-                                   (ret_num + 1) as u32,
-                                   0);
+                IRGen::emit_iABC(instructions,
+                                 OpName::RETURN,
+                                 start_register,
+                                 (ret_num + 1) as u32,
+                                 0);
                 Ok(())
             }
             Stat::IfElse(ref test_expr, ref then_block, ref else_block) => {
@@ -337,7 +337,7 @@ impl CodeGen {
                 } else {
                     res_alloc.reg_alloc.push(None)
                 };
-                CodeGen::emit_iABx(instructions, OpName::LOADNIL, reg, reg);
+                IRGen::emit_iABx(instructions, OpName::LOADNIL, reg, reg);
                 Ok((true, reg))
             }
             Expr::Num(num) => {
@@ -347,7 +347,7 @@ impl CodeGen {
                 } else {
                     res_alloc.reg_alloc.push(None)
                 };
-                CodeGen::emit_iABx(instructions, OpName::LOADK, reg, const_pos);
+                IRGen::emit_iABx(instructions, OpName::LOADK, reg, const_pos);
                 Ok((true, reg))
             }
             Expr::Boole(value) => {
@@ -357,7 +357,7 @@ impl CodeGen {
                 } else {
                     res_alloc.reg_alloc.push(None)
                 };
-                CodeGen::emit_iABC(instructions, OpName::LOADBOOL, reg, bit, 0);
+                IRGen::emit_iABC(instructions, OpName::LOADBOOL, reg, bit, 0);
                 Ok((true, reg))
             }
             Expr::Str(ref s) => {
@@ -367,7 +367,7 @@ impl CodeGen {
                 } else {
                     res_alloc.reg_alloc.push(None)
                 };
-                CodeGen::emit_iABx(instructions, OpName::LOADK, reg, const_pos);
+                IRGen::emit_iABx(instructions, OpName::LOADK, reg, const_pos);
                 Ok((true, reg))
             }
             Expr::BinOp(flag, ref left, ref right) => {
@@ -391,7 +391,7 @@ impl CodeGen {
                                 (true, res_alloc.reg_alloc.push(None))
                             }
                         };
-                        CodeGen::emit_iABC(instructions, op, result_reg, left_reg, right_reg);
+                        IRGen::emit_iABC(instructions, op, result_reg, left_reg, right_reg);
                         Ok((result_is_temp, result_reg))
                     }
                     _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
@@ -422,19 +422,16 @@ impl CodeGen {
                 } else {
                     res_alloc.reg_alloc.push(None)
                 };
-                CodeGen::emit_iABx(instructions, OpName::CLOSURE, reg, func_pos);
+                IRGen::emit_iABx(instructions, OpName::CLOSURE, reg, func_pos);
                 //  generate virtual move instructions
                 //  helping vm to manage upvalue
                 for (is_immidiate, pos_in_vl, pos_in_parent) in function_prototype.upvalue_list {
                     //  move: pass the variable in current lexical scope to closure
                     if is_immidiate {
-                        CodeGen::emit_iABx(instructions, OpName::MOVE, pos_in_vl, pos_in_parent);
+                        IRGen::emit_iABx(instructions, OpName::MOVE, pos_in_vl, pos_in_parent);
                     } else {
                         // getupval: pass upvalue to the closure
-                        CodeGen::emit_iABx(instructions,
-                                           OpName::GETUPVAL,
-                                           pos_in_vl,
-                                           pos_in_parent);
+                        IRGen::emit_iABx(instructions, OpName::GETUPVAL, pos_in_vl, pos_in_parent);
                     }
                 }
                 Ok((true, reg))
@@ -472,12 +469,12 @@ impl CodeGen {
         match *expr {
             Expr::TableRef(ref table, ref key) => {
                 let (_, table_reg) = self.visit_r_expr(table, res_alloc, instructions, None)?;
-                let (_, key_creg) = self.reg_constid_merge(key, res_alloc, instructions, None)?;
-                CodeGen::emit_iABC(instructions,
-                                   OpName::SETTABLE,
-                                   table_reg,
-                                   key_creg,
-                                   value_creg);
+                let key_creg = self.visit_table_key(key, res_alloc, instructions)?;
+                IRGen::emit_iABC(instructions,
+                                 OpName::SETTABLE,
+                                 table_reg,
+                                 key_creg,
+                                 value_creg);
             }
             _ => unimplemented!(),
         }
@@ -500,9 +497,9 @@ impl CodeGen {
         let false_label = res_alloc.label_alloc.new_label();
         let mut raw = self.visit_boolean_expr(expr, res_alloc, true_label, false_label, true)?;
         raw.push(OpMode::Label(false_label));
-        CodeGen::emit_iABC(&mut raw, OpName::LOADBOOL, result_reg, 0, 1);
+        IRGen::emit_iABC(&mut raw, OpName::LOADBOOL, result_reg, 0, 1);
         raw.push(OpMode::Label(true_label));
-        CodeGen::emit_iABC(&mut raw, OpName::LOADBOOL, result_reg, 1, 0);
+        IRGen::emit_iABC(&mut raw, OpName::LOADBOOL, result_reg, 1, 0);
         instruction.append(&mut raw);
         Ok((true, result_reg))
     }
@@ -576,7 +573,7 @@ impl CodeGen {
                         };
                         raw.push(OpMode::iABC(op_name, test_int, left_reg, right_reg));
                         raw.push(OpMode::rJMP(path));
-                        // CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                        // IRGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
                         Ok(raw)
                     }
                     _ => panic!("expression not accept as boolean"),
@@ -597,12 +594,12 @@ impl CodeGen {
                     // fall to true path
                     raw.push(OpMode::iABx(OpName::TEST, reg, 1));
                     raw.push(OpMode::rJMP(true_br));
-                    // CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                    // IRGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
                 } else {
                     // fall to false path
                     raw.push(OpMode::iABx(OpName::TEST, reg, 0));
                     raw.push(OpMode::rJMP(false_br));
-                    // CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, true_br);
+                    // IRGen::emit_iAsBx(&mut raw, OpName::JMP, 0, true_br);
                 }
                 Ok(raw)
             }
@@ -611,7 +608,7 @@ impl CodeGen {
                 if value {
                     raw.push(OpMode::rJMP(true_br));
                 } else {
-                    CodeGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                    IRGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
                     raw.push(OpMode::rJMP(false_br));
                 }
                 Ok(raw)
@@ -656,7 +653,7 @@ impl CodeGen {
                         } else {
                             res_alloc.reg_alloc.push(None)
                         };
-                        CodeGen::emit_iABx(instructions, OpName::GETGLOBAL, reg, const_pos);
+                        IRGen::emit_iABx(instructions, OpName::GETGLOBAL, reg, const_pos);
                         Ok((true, reg))
                     }
                     SymbolScope::UpValue(depth) => {
@@ -668,16 +665,16 @@ impl CodeGen {
                             res_alloc.reg_alloc.push(None)
                         };
                         // todo: optimize, reduce register number
-                        CodeGen::emit_iABx(instructions,
-                                           OpName::GETUPVAL,
-                                           reg,
-                                           immidiate_upvalue_pos);
+                        IRGen::emit_iABx(instructions,
+                                         OpName::GETUPVAL,
+                                         reg,
+                                         immidiate_upvalue_pos);
                         Ok((true, reg))
                     }
                     SymbolScope::Local => {
                         if let Some(expect) = expect_reg {
                             if expect != pos {
-                                CodeGen::emit_iABx(instructions, OpName::MOVE, expect, pos);
+                                IRGen::emit_iABx(instructions, OpName::MOVE, expect, pos);
                                 Ok((false, expect)) // caller-provided register is viewed as none temp
                             } else {
                                 Ok((false, expect))
@@ -723,7 +720,7 @@ impl CodeGen {
         }
         self.visit_r_expr(expr, res_alloc, instructions, Some(Expect::Reg(func_pos)))?;
         arg_field = self.visit_args(args, func_pos, res_alloc, instructions)?;
-        CodeGen::emit_iABC(instructions, OpName::CALL, func_pos, arg_field, ret_field);
+        IRGen::emit_iABC(instructions, OpName::CALL, func_pos, arg_field, ret_field);
         Ok(func_pos)
     }
 
@@ -757,16 +754,15 @@ impl CodeGen {
                           res_alloc,
                           instructions,
                           Some(Expect::Reg(table_pos)))?;
-        let (_, name_pos) = self.reg_constid_merge(&Expr::Var(Var::Name(func_name.clone())),
-                               res_alloc,
-                               instructions,
-                               None)?;
-        CodeGen::emit_iABC(instructions, OpName::SELF, func_pos, table_pos, name_pos);
+        let name_pos = self.visit_table_key(&Expr::Var(Var::Name(func_name.clone())),
+                             res_alloc,
+                             instructions)?;
+        IRGen::emit_iABC(instructions, OpName::SELF, func_pos, table_pos, name_pos);
         arg_field = match self.visit_args(args, func_pos, res_alloc, instructions)? {
             0 => 0,
             i @ _ => i + 1,
         };
-        CodeGen::emit_iABC(instructions, OpName::CALL, func_pos, arg_field, ret_field);
+        IRGen::emit_iABC(instructions, OpName::CALL, func_pos, arg_field, ret_field);
         Ok(func_pos)
     }
 
@@ -866,7 +862,7 @@ impl CodeGen {
                 let reg = res_alloc.reg_alloc.push(None);
                 extended.push(Expr::Var(Var::Reg(reg)));
             }
-            CodeGen::emit_iABx(instructions, OpName::LOADNIL, start_reg, num - 1);
+            IRGen::emit_iABx(instructions, OpName::LOADNIL, start_reg, num - 1);
             return Ok((varlist.clone(), extended));
         }
     }
@@ -884,9 +880,25 @@ impl CodeGen {
             res_alloc.reg_alloc.push(None)
         };
         let (_, table_reg) = self.visit_r_expr(table, res_alloc, instructions, None)?;
-        let (_, key_creg) = self.reg_constid_merge(key, res_alloc, instructions, None)?;
-        CodeGen::emit_iABC(instructions, OpName::GETTABLE, reg, table_reg, key_creg);
+        let key_creg = self.visit_table_key(key, res_alloc, instructions)?;
+        IRGen::emit_iABC(instructions, OpName::GETTABLE, reg, table_reg, key_creg);
         Ok((true, reg))
+    }
+
+    fn visit_table_key(&mut self,
+                       key: &Expr,
+                       res_alloc: &mut ResourceAlloc,
+                       instructions: &mut Vec<OpMode>)
+                       -> Result<u32, CompileError> {
+        match key {
+            &Expr::Var(Var::Name(ref name)) => {
+                Ok(0x100 | res_alloc.const_alloc.push(ConstType::Str(name.clone())))
+            }
+            _ => {
+                let (_, reg_or_const) = self.reg_constid_merge(key, res_alloc, instructions, None)?;
+                Ok(reg_or_const)
+            }
+        }
     }
 
     fn visit_table_ctor(&mut self,
@@ -908,11 +920,11 @@ impl CodeGen {
         }
         let (hash_part, array_part) = Self::split_table_entrys(entrys);
 
-        CodeGen::emit_iABC(instructions,
-                           OpName::NEWTABLE,
-                           result_reg,
-                           array_part.len().to_f8(),
-                           hash_part.len().to_f8());
+        IRGen::emit_iABC(instructions,
+                         OpName::NEWTABLE,
+                         result_reg,
+                         array_part.len().to_f8(),
+                         hash_part.len().to_f8());
 
         // add elements in the array_part
         // fine, I'll follow the standard
@@ -939,11 +951,11 @@ impl CodeGen {
                 dest_reg += 1;
             }
             // FIXME: consider when flush_id is too large to encode
-            CodeGen::emit_iABC(instructions,
-                               OpName::SETLIST,
-                               result_reg,
-                               LFIELDS_PER_FLUSH,
-                               flush_id + 1);
+            IRGen::emit_iABC(instructions,
+                             OpName::SETLIST,
+                             result_reg,
+                             LFIELDS_PER_FLUSH,
+                             flush_id + 1);
         }
         // then finish residue part
         let mut dest_reg = result_reg + 1;
@@ -955,27 +967,27 @@ impl CodeGen {
             dest_reg += 1;
         }
         if residue_num > 0 {
-            CodeGen::emit_iABC(instructions,
-                               OpName::SETLIST,
-                               result_reg,
-                               residue_num,
-                               flush_num + 1);
+            IRGen::emit_iABC(instructions,
+                             OpName::SETLIST,
+                             result_reg,
+                             residue_num,
+                             flush_num + 1);
         }
         // add pairs in the hash_part
         for (key, value) in hash_part {
-            let (_, key_rkc) = self.reg_constid_merge(&key, res_alloc, instructions, None)?;
+            let key_rkc = self.visit_table_key(&key, res_alloc, instructions)?;
             let (_, value_rkc) = self.reg_constid_merge(&value, res_alloc, instructions, None)?;
-            CodeGen::emit_iABC(instructions,
-                               OpName::SETTABLE,
-                               result_reg,
-                               key_rkc,
-                               value_rkc);
+            IRGen::emit_iABC(instructions,
+                             OpName::SETTABLE,
+                             result_reg,
+                             key_rkc,
+                             value_rkc);
         }
         Ok((true, result_reg))
     }
 }
 
-impl CodeGen {
+impl IRGen {
     /// allocate name in const
     /// and define in global scope
     /// avoiding duplication included
@@ -1003,7 +1015,7 @@ impl CodeGen {
 }
 
 /// helper functions
-impl CodeGen {
+impl IRGen {
     /// split Vec<TableEntry> to hash part(named) and array part(unnamed)
     fn split_table_entrys(entrys: &Vec<TableEntry>) -> (Vec<(Expr, Expr)>, Vec<Expr>) {
         let mut hash_part = vec![];
@@ -1029,9 +1041,6 @@ impl CodeGen {
                          expect: Option<Expect>)
                          -> Result<(bool, u32), CompileError> {
         let reg_or_const = match expr {
-            &Expr::Var(Var::Name(ref name)) => {
-                (false, 0x100 | res_alloc.const_alloc.push(ConstType::Str(name.clone())))
-            }
             &Expr::Num(num) => (false, 0x100 | res_alloc.const_alloc.push(ConstType::Real(num))),
             &Expr::Boole(boolean) => {
                 (false, 0x100 | res_alloc.const_alloc.push(ConstType::Boole(boolean)))
@@ -1058,8 +1067,8 @@ pub mod tests {
         "))
             .unwrap();
 
-        let mut compiler = CodeGen::new();
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        let mut compiler = IRGen::new();
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
     }
 
     #[test]
@@ -1073,8 +1082,8 @@ pub mod tests {
         "))
             .unwrap();
 
-        let mut compiler = CodeGen::new();
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        let mut compiler = IRGen::new();
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
     }
 
     // #[test]
@@ -1088,8 +1097,8 @@ pub mod tests {
             local d = b + c
         "))
             .unwrap();
-        let mut compiler = CodeGen::new();
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        let mut compiler = IRGen::new();
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
         // println!("{:?}", compiler.root_function);
     }
     #[test]
@@ -1099,8 +1108,8 @@ pub mod tests {
             local c = not ( 2 <= 3 or a == b )
         "))
             .unwrap();
-        let mut compiler = CodeGen::new();
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        let mut compiler = IRGen::new();
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
         // println!("{:?}", compiler.root_function);
     }
     #[test]
@@ -1117,8 +1126,8 @@ pub mod tests {
             end
         "))
             .expect("Parse Error");
-        let mut compiler = CodeGen::new();
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        let mut compiler = IRGen::new();
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
         // println!("{:?}", compiler.root_function);
     }
     #[test]
@@ -1134,8 +1143,8 @@ pub mod tests {
             end
         "))
             .expect("Parse Error");
-        let mut compiler = CodeGen::new();
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        let mut compiler = IRGen::new();
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
         // println!("Byte Code: {:?}", compiler.root_function);
     }
     #[test]
@@ -1150,8 +1159,8 @@ pub mod tests {
             end
         "))
             .expect("Parse Error");
-        let mut compiler = CodeGen::new();
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        let mut compiler = IRGen::new();
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
     #[test]
@@ -1160,8 +1169,8 @@ pub mod tests {
             local a, b, c = 1, 2, 1.5
         "))
             .expect("Parse Error");
-        let mut compiler = CodeGen::new();
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        let mut compiler = IRGen::new();
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
     #[test]
@@ -1172,9 +1181,9 @@ pub mod tests {
                            1, 2, 3 }
         "))
             .expect("Parse Error");
-        let mut compiler = CodeGen::new();
+        let mut compiler = IRGen::new();
         println!("Ast: {:?}", ast);
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
     #[test]
@@ -1187,9 +1196,9 @@ pub mod tests {
                               table['subtable'][1]
         "))
             .expect("Parse Error");
-        let mut compiler = CodeGen::new();
+        let mut compiler = IRGen::new();
         println!("Ast: {:?}", ast);
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
     #[test]
@@ -1210,9 +1219,9 @@ pub mod tests {
             stu.grades:add_grade('C')
         "))
             .expect("Parse Error");
-        let mut compiler = CodeGen::new();
+        let mut compiler = IRGen::new();
         println!("Ast: {:?}", ast);
-        assert_eq!(compiler.compile(&ast), Ok(()));
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
 }

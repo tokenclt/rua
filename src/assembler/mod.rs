@@ -12,13 +12,13 @@ pub struct Assembler {
 }
 
 impl Assembler {
-    pub fn assemble(chunk: &FunctionChunk, source_name: &String) -> Result<BytecodeVec, AsmError> {
+    pub fn assemble(chunk: &FunctionChunk, source_name: &String) -> Result<ByteCodeVec, AsmError> {
         Self::asm_chunk(chunk, source_name)
     }
 }
 
 impl Assembler {
-    fn asm_chunk(chunk: &FunctionChunk, source_name: &String) -> Result<BytecodeVec, AsmError> {
+    fn asm_chunk(chunk: &FunctionChunk, source_name: &String) -> Result<ByteCodeVec, AsmError> {
         let mut result = vec![];
         result.append(&mut Self::file_header());
         result.append(&mut Self::encode_source_name(source_name));
@@ -26,7 +26,7 @@ impl Assembler {
         Ok(result)
     }
 
-    fn asm_function_chunk(chunk: &FunctionChunk) -> Result<BytecodeVec, AsmError> {
+    fn asm_function_chunk(chunk: &FunctionChunk) -> Result<ByteCodeVec, AsmError> {
         let mut result = vec![];
         result.extend_from_slice(&Self::unpack_u32(chunk.first_line));
         result.extend_from_slice(&Self::unpack_u32(chunk.last_line));
@@ -47,7 +47,7 @@ impl Assembler {
     /// Generate u8 for instructions
     /// with size field
     #[allow(non_snake_case)]
-    fn asm_block(instrs: &Vec<OpMode>) -> BytecodeVec {
+    fn asm_block(instrs: &Vec<OpMode>) -> ByteCodeVec {
         let mut result = vec![];
         result.extend_from_slice(&Self::unpack_u32(instrs.len() as u32));
         let label_removed = Self::remove_label(instrs);
@@ -63,7 +63,7 @@ impl Assembler {
         result
     }
 
-    fn asm_function_list(func_list: &Vec<FunctionChunk>) -> Result<BytecodeVec, AsmError> {
+    fn asm_function_list(func_list: &Vec<FunctionChunk>) -> Result<ByteCodeVec, AsmError> {
         let mut result = vec![];
         result.extend_from_slice(&Self::unpack_u32(func_list.len() as u32));
         for func_def in func_list {
@@ -72,14 +72,14 @@ impl Assembler {
         Ok(result)
     }
 
-    fn file_header() -> BytecodeVec {
+    fn file_header() -> ByteCodeVec {
         vec![
             0x1b, 0x4c, 0x75, 0x61,  // header sigature
             0x51, 0x00, 0x01, 0x04,  // size of int, endianese, official, vers
             0x04, 0x04, 0x08, 0x00,  // !interal, size of number, instr, size_
         ]
     }
-    fn encode_source_name(src_name: &String) -> BytecodeVec {
+    fn encode_source_name(src_name: &String) -> ByteCodeVec {
         let u32_code = format!("@{}", src_name).to_bytecode();
         Self::unpack_str(u32_code)
     }
@@ -90,7 +90,7 @@ impl Assembler {
         unsafe { transmute::<u32, [u8; 4]>(num) }
     }
 
-    fn unpack_f64(num: f64) -> BytecodeVec {
+    fn unpack_f64(num: f64) -> ByteCodeVec {
         let mut result = Vec::with_capacity(8);
         let left = num.to_bytecode()[0];
         let right = num.to_bytecode()[1];
@@ -100,7 +100,7 @@ impl Assembler {
     }
 
     /// convert Vec<u32> to Vec<u8>
-    fn unpack_constant(consts: &Vec<ConstType>) -> BytecodeVec {
+    fn unpack_constant(consts: &Vec<ConstType>) -> ByteCodeVec {
         let mut const_list = vec![];
         // size of const list
         const_list.extend_from_slice(&Self::unpack_u32(consts.len() as u32));
@@ -127,7 +127,7 @@ impl Assembler {
         const_list
     }
 
-    fn unpack_str(str_u32: Vec<u32>) -> BytecodeVec {
+    fn unpack_str(str_u32: Vec<u32>) -> ByteCodeVec {
         let byte_len = str_u32[0];
         let mut result = Vec::with_capacity(byte_len as usize + 4);
         let mut counter = 0;
@@ -193,7 +193,7 @@ impl Assembler {
 pub mod tests {
     use super::*;
     use parser::Parser;
-    use ir_generator::CodeGen;
+    use ir_generator::IRGen;
     use std::str::Chars;
     use std::mem::transmute;
 
@@ -228,9 +228,8 @@ pub mod tests {
             -- Nothing
         "))
             .expect("Syntax Error");
-        let mut ir_gen = CodeGen::new();
-        assert_eq!(ir_gen.compile(&ast), Ok(()));
-        println!("Chunk: {:?}", ir_gen.get_chunk());
+        let mut ir_gen = IRGen::new();
+        assert_eq!(ir_gen.generate_ir(&ast), Ok(()));
         let bytecode = Assembler::assemble(ir_gen.get_chunk(), &"empty.lua".to_string())
             .expect("Assemble failed");
 
