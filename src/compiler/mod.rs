@@ -18,6 +18,9 @@ impl Compiler {
         let ast = Parser::<Chars>::ast_from_text(text).expect("Syntax Error");
         let mut ir_gen = IRGen::new();
         ir_gen.generate_ir(&ast).expect("Generating IR failed");
+
+        println!("{:?}", ir_gen.get_chunk());
+
         let bytecode = Assembler::assemble(ir_gen.get_chunk(), source_name)
             .expect("Assemble failed");
         bytecode
@@ -84,6 +87,7 @@ mod tests {
 
         let output = Command::new("lua").arg(name).output().expect("Could not run lua.");
         let expect = expect.to_string();
+        println!("Running: {:?}", name);
         assert_eq!(output.stdout, expect.into_bytes());
     }
 
@@ -107,5 +111,28 @@ mod tests {
         let name = "simple_int_arith".to_string();
         let bytecode = Compiler::from_string(&code, &name);
         run_and_check(&name, bytecode, "8\t-4\r\n");
+    }
+
+    #[test]
+    fn branch() {
+        let code = "\
+            local a, b = 1, 2
+            local cond = true
+
+            if a ~= b then
+                c = 2
+            else 
+                c = 3
+            end
+            if cond then
+                d = 4
+            else 
+                d = 5
+            end
+            print(c, d)
+        ".to_string();
+        let name = "branch".to_string();
+        let bytecode = Compiler::from_string(&code, &name);
+        run_and_check(&name, bytecode, "2\t4\r\n");
     }
 }

@@ -49,8 +49,8 @@ impl Assembler {
     #[allow(non_snake_case)]
     fn asm_block(instrs: &Vec<OpMode>) -> ByteCodeVec {
         let mut result = vec![];
-        result.extend_from_slice(&Self::unpack_u32(instrs.len() as u32));
         let label_removed = Self::remove_label(instrs);
+        result.extend_from_slice(&Self::unpack_u32(label_removed.len() as u32));        
         for instr in &label_removed {
             let packed = match instr {
                 &OpMode::iABC(op, A, B, C) => OpcodeBuilder::iABC(op, A, B, C),

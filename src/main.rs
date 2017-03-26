@@ -4,8 +4,6 @@ mod ir_generator;
 mod bytecode_generator;
 mod assembler;
 mod compiler;
-// mod interpreter;
 
 fn main() {
-    
 }
