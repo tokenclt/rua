@@ -169,8 +169,8 @@ impl Assembler {
         for (pos, ins) in label_removed.iter().enumerate() {
             match **ins {
                 OpMode::rJMP(ref label) => {
-                    // TODO: negative jmp
-                    let num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
+                    let mut num = index.get(label).expect("Label undefined") - (pos as i32) - 1;
+                    // adjust negative jump
                     if num != 0 {
                         replaced.push(OpMode::iAsBx(OpName::JMP, 0, num));
                     }

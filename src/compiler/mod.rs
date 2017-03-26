@@ -130,9 +130,26 @@ mod tests {
                 d = 5
             end
             print(c, d)
-        ".to_string();
+        "
+            .to_string();
         let name = "branch".to_string();
         let bytecode = Compiler::from_string(&code, &name);
         run_and_check(&name, bytecode, "2\t4\r\n");
+    }
+
+    #[test]
+    fn while_loop() {
+        let code = "\
+            local i, sum = 0, 0
+            while i <= 100 do
+                sum = sum + i
+                i = i + 1
+            end
+            print(sum)
+        "
+            .to_string();
+        let name = "while_loop".to_string();
+        let bytecode = Compiler::from_string(&code, &name);
+        run_and_check(&name, bytecode, "5050\r\n");
     }
 }

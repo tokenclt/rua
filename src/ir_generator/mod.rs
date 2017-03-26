@@ -180,7 +180,7 @@ impl IRGen {
                     } else {
                         let pos = res_alloc.reg_alloc.push(Some(name));
                         self.symbol_table.define_local(name, pos);
-                        IRGen::emit_iABx(instructions, OpName::MOVE, pos, expr_reg);
+                        IRGen::emit_iABC(instructions, OpName::MOVE, pos, expr_reg, 0);
                     }
                 }
                 Ok(())
@@ -428,7 +428,7 @@ impl IRGen {
                 for (is_immidiate, pos_in_vl, pos_in_parent) in function_prototype.upvalue_list {
                     //  move: pass the variable in current lexical scope to closure
                     if is_immidiate {
-                        IRGen::emit_iABx(instructions, OpName::MOVE, pos_in_vl, pos_in_parent);
+                        IRGen::emit_iABC(instructions, OpName::MOVE, pos_in_vl, pos_in_parent, 0);
                     } else {
                         // getupval: pass upvalue to the closure
                         IRGen::emit_iABx(instructions, OpName::GETUPVAL, pos_in_vl, pos_in_parent);
@@ -554,8 +554,8 @@ impl IRGen {
                     FlagType::LESS | FlagType::LEQ | FlagType::GREATER | FlagType::GEQ |
                     FlagType::EQ | FlagType::NEQ => {
                         let mut raw = vec![];
-                        let (_, left_reg) = self.visit_r_expr(left, res_alloc, &mut raw, None)?;
-                        let (_, right_reg) = self.visit_r_expr(right, res_alloc, &mut raw, None)?;
+                        let (_, left_reg) = self.reg_constid_merge(left, res_alloc, &mut raw, None)?;
+                        let (_, right_reg) = self.reg_constid_merge(right, res_alloc, &mut raw, None)?;
                         let (op_name, test_bool) = match op {
                             FlagType::LESS => (OpName::LT, true),
                             FlagType::LEQ => (OpName::LE, true),
@@ -674,7 +674,7 @@ impl IRGen {
                     SymbolScope::Local => {
                         if let Some(expect) = expect_reg {
                             if expect != pos {
-                                IRGen::emit_iABx(instructions, OpName::MOVE, expect, pos);
+                                IRGen::emit_iABC(instructions, OpName::MOVE, expect, pos, 0);
                                 Ok((false, expect)) // caller-provided register is viewed as none temp
                             } else {
                                 Ok((false, expect))

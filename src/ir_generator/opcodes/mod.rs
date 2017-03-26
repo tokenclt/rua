@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 use lexer::tokens::FlagType;
 use super::types::*;
+use std::num::Wrapping;
 
 const SIZE_C: u32 = 9;
 const SIZE_B: u32 = 9;
@@ -134,8 +135,8 @@ impl OpcodeBuilder {
 
     pub fn iAsBx(op: OpName, A: u32, sBx: i32) -> u32 {
         // trancate
-        let bias = 0x1ffff_u32;
-        let trancated = ((sBx as u32) + bias) & 0x3ffff_u32;
+        let bias = Wrapping(0x1ffff_u32);
+        let trancated = (Wrapping(sBx as u32) + bias).0 & 0x3ffff_u32;
         if A > mask_1(SIZE_A, 0) {
             panic!("Instuction parameter overflow");
         }
