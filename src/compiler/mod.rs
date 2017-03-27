@@ -114,6 +114,18 @@ mod tests {
     }
 
     #[test]
+    fn boolean_arith() {
+        let code = "
+            local a, b = true, false
+            local c = not ( 3 <= 2 or a == b)
+            print(c)
+        ".to_string();
+        let name = "boolean_arith".to_string();
+        let bc = Compiler::from_string(&code, &name);
+        run_and_check(&name, bc, "true\r\n");
+    }
+
+    #[test]
     fn branch() {
         let code = "\
             local a, b = 1, 2
@@ -152,4 +164,49 @@ mod tests {
         let bytecode = Compiler::from_string(&code, &name);
         run_and_check(&name, bytecode, "5050\r\n");
     }
+
+    #[test]
+    fn for_numeric() {
+        let code = "\
+            local sum1, sum2 = 0, 0
+            for i = 1, 100, 1 do
+                sum1 = sum1 + i
+            end
+            for i = 0, 100, 2 do
+                sum2 = sum2 + i 
+            end
+            print(sum1, sum2)
+        "
+            .to_string();
+        let name = "for_numeric".to_string();
+        let bc = Compiler::from_string(&code, &name);
+        run_and_check(&name, bc, "5050\t2550\r\n");
+    }
+
+    #[test]
+    fn build_table() {
+        let code = "\
+            table = {name='Ann', age = 10 + 8,
+                    1, 2, 3}
+            print(table.name, table['age'], table[1], table[2], table[3])
+        "
+            .to_string();
+        let name = "build_table".to_string();
+        let bc = Compiler::from_string(&code, &name);
+        run_and_check(&name, bc, "Ann\t18\t1\t2\t3\r\n");
+    }
+
+    /* 
+    FIXME: Parser do not report error for 
+    function(a, b)
+        a + b   
+    end
+    */
+
+    /*
+    FIXME: inner func definition is incomplete,
+           forget to add source name
+           desired name is an empty string
+    */
+
 }

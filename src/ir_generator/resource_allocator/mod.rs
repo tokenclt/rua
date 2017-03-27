@@ -21,14 +21,9 @@ impl RegisterAlloc {
     pub fn push(&mut self, name: Option<&str>) -> Usize {
         match name {
             Some(name) => {
-                match self.name_indexer.get(name) {
-                    Some(&reg) => reg,
-                    None => {
-                        self.name_indexer.insert(name.to_string(), self.counter);
-                        self.increament_count();
-                        self.counter - 1
-                    }
-                }
+                self.name_indexer.insert(name.to_string(), self.counter);
+                self.increament_count();
+                self.counter - 1
             }
             None => {
                 self.name_indexer.insert("__TEMP__".to_string() + &self.counter.to_string(),
@@ -170,7 +165,7 @@ impl FunctionAlloc {
 
     pub fn push(&mut self, function: FunctionChunk) -> Usize {
         self.functions.push(function);
-        (self.functions.len() - 1 ) as Usize
+        (self.functions.len() - 1) as Usize
     }
 
     pub fn size(&self) -> usize {
@@ -185,12 +180,12 @@ impl FunctionAlloc {
 #[derive(Debug)]
 /// label allocator
 pub struct LabelAlloc {
-    counter: i32
+    counter: i32,
 }
 
-impl LabelAlloc{
+impl LabelAlloc {
     pub fn new() -> LabelAlloc {
-        LabelAlloc{counter: 0}
+        LabelAlloc { counter: 0 }
     }
 
     pub fn new_label(&mut self) -> i32 {
@@ -207,7 +202,7 @@ pub struct ResourceAlloc {
     pub upvalue_alloc: UpValueAlloc,
     pub label_alloc: LabelAlloc,
     pub parent: *mut ResourceAlloc,
-    loop_exit: Option<Label>
+    loop_exit: Option<Label>,
 }
 
 impl ResourceAlloc {
@@ -219,7 +214,7 @@ impl ResourceAlloc {
             upvalue_alloc: UpValueAlloc::new(),
             label_alloc: LabelAlloc::new(),
             parent: ptr::null_mut(),
-            loop_exit: None
+            loop_exit: None,
         }
     }
 
