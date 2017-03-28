@@ -14,14 +14,14 @@ pub struct Compiler {
 }
 
 impl Compiler {
-    pub fn from_string(text: &String, source_name: &String) -> ByteCodeVec {
+    pub fn from_string(text: &String, source_name: &str) -> ByteCodeVec {
         let ast = Parser::<Chars>::ast_from_text(text).expect("Syntax Error");
         let mut ir_gen = IRGen::new();
         ir_gen.generate_ir(&ast).expect("Generating IR failed");
 
-        println!("{:?}", ir_gen.get_chunk());
+        println!("{:?}", ir_gen.get_chunk(source_name));
 
-        let bytecode = Assembler::assemble(ir_gen.get_chunk(), source_name)
+        let bytecode = Assembler::assemble(ir_gen.get_chunk(source_name))
             .expect("Assemble failed");
         bytecode
     }
@@ -119,7 +119,8 @@ mod tests {
             local a, b = true, false
             local c = not ( 3 <= 2 or a == b)
             print(c)
-        ".to_string();
+        "
+            .to_string();
         let name = "boolean_arith".to_string();
         let bc = Compiler::from_string(&code, &name);
         run_and_check(&name, bc, "true\r\n");
@@ -196,17 +197,27 @@ mod tests {
         run_and_check(&name, bc, "Ann\t18\t1\t2\t3\r\n");
     }
 
-    /* 
-    FIXME: Parser do not report error for 
-    function(a, b)
-        a + b   
-    end
-    */
+    #[test]
+    fn func_play() {
+        let code = "\
+            add_sub = function(a, b)
+                return a + b, a - b
+            end
+            print(add_sub(1, 2))
+        "
+            .to_string();
+        let name = "func_play".to_string();
+        let bc = Compiler::from_string(&code, &name);
+        run_and_check(&name, bc, "3\t-1\r\n");
+    }
+    // FIXME: Parser do not report error for
+    // function(a, b)
+    // a + b
+    // end
+    //
 
-    /*
-    FIXME: inner func definition is incomplete,
-           forget to add source name
-           desired name is an empty string
-    */
+    // FIXME: Resource allocator hierachy is bad
+    //        can't go back to parent level
+    //        consider merging symbol table as allocator
 
 }

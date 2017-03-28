@@ -34,7 +34,8 @@ impl IRGen {
         self.visit_unit(ast)
     }
 
-    pub fn get_chunk(&self) -> &FunctionChunk {
+    pub fn get_chunk(&mut self, src_name: &str) -> &FunctionChunk {
+        self.root_function.source_name = Some(src_name.to_string());
         &self.root_function
     }
 }

@@ -12,22 +12,22 @@ pub struct Assembler {
 }
 
 impl Assembler {
-    pub fn assemble(chunk: &FunctionChunk, source_name: &String) -> Result<ByteCodeVec, AsmError> {
-        Self::asm_chunk(chunk, source_name)
+    pub fn assemble(chunk: &FunctionChunk) -> Result<ByteCodeVec, AsmError> {
+        Self::asm_chunk(chunk)
     }
 }
 
 impl Assembler {
-    fn asm_chunk(chunk: &FunctionChunk, source_name: &String) -> Result<ByteCodeVec, AsmError> {
+    fn asm_chunk(chunk: &FunctionChunk) -> Result<ByteCodeVec, AsmError> {
         let mut result = vec![];
         result.append(&mut Self::file_header());
-        result.append(&mut Self::encode_source_name(source_name));
         result.append(&mut Self::asm_function_chunk(chunk)?);
         Ok(result)
     }
 
     fn asm_function_chunk(chunk: &FunctionChunk) -> Result<ByteCodeVec, AsmError> {
         let mut result = vec![];
+        result.append(&mut Self::encode_source_name(&chunk.source_name));
         result.extend_from_slice(&Self::unpack_u32(chunk.first_line));
         result.extend_from_slice(&Self::unpack_u32(chunk.last_line));
         result.push(chunk.upvalue_num as u8);
@@ -50,7 +50,7 @@ impl Assembler {
     fn asm_block(instrs: &Vec<OpMode>) -> ByteCodeVec {
         let mut result = vec![];
         let label_removed = Self::remove_label(instrs);
-        result.extend_from_slice(&Self::unpack_u32(label_removed.len() as u32));        
+        result.extend_from_slice(&Self::unpack_u32(label_removed.len() as u32));
         for instr in &label_removed {
             let packed = match instr {
                 &OpMode::iABC(op, A, B, C) => OpcodeBuilder::iABC(op, A, B, C),
@@ -79,8 +79,11 @@ impl Assembler {
             0x04, 0x04, 0x08, 0x00,  // !interal, size of number, instr, size_
         ]
     }
-    fn encode_source_name(src_name: &String) -> ByteCodeVec {
-        let u32_code = format!("@{}", src_name).to_bytecode();
+    fn encode_source_name(src_name: &Option<String>) -> ByteCodeVec {
+        let u32_code = match src_name {
+            &Some(ref name) => format!("@{}", name).to_bytecode(),
+            &None => vec![0],
+        };
         Self::unpack_str(u32_code)
     }
 }
@@ -230,7 +233,7 @@ pub mod tests {
             .expect("Syntax Error");
         let mut ir_gen = IRGen::new();
         assert_eq!(ir_gen.generate_ir(&ast), Ok(()));
-        let bytecode = Assembler::assemble(ir_gen.get_chunk(), &"empty.lua".to_string())
+        let bytecode = Assembler::assemble(ir_gen.get_chunk("empty.lua"))
             .expect("Assemble failed");
 
         let expect = build_bc![

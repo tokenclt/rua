@@ -55,6 +55,7 @@ pub enum CompileError {
 
 #[derive(Debug)]
 pub struct FunctionChunk {
+    pub source_name: Option<String>,
     pub first_line: Usize,
     pub last_line: Usize,
     pub upvalue_num: Usize,
@@ -71,6 +72,7 @@ pub struct FunctionChunk {
 impl FunctionChunk {
     pub fn new() -> FunctionChunk {
         FunctionChunk {
+            source_name: None,
             first_line: 0,
             last_line: 0,
             upvalue_num: 0,
@@ -118,6 +120,10 @@ impl ToBytecode for f64 {
 
 impl ToBytecode for String {
     fn to_bytecode(&self) -> Vec<u32> {
+        if self.len() == 0 {
+            return vec![0];
+        }
+
         let mut with_zero = self.clone().into_bytes();
         with_zero.push(0);
         let len = with_zero.len() as u32;
