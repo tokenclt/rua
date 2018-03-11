@@ -1,4 +1,4 @@
-[root]
-name = "hello_world"
+[[package]]
+name = "rua"
 version = "0.1.0"
 
