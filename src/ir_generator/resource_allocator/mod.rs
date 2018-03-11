@@ -90,10 +90,6 @@ impl ConstAlloc {
         }
     }
 
-    pub fn size(&self) -> usize {
-        self.storage.len()
-    }
-
     pub fn dump(self) -> Vec<ConstType> {
         self.storage
     }

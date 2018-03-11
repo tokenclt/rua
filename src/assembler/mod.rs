@@ -193,6 +193,7 @@ impl Assembler {
     }
 }
 
+#[cfg(test)]
 pub mod tests {
     use super::*;
     use parser::Parser;

@@ -5,3 +5,7 @@ authors = ["Mingyu Zhou <zhoumy46@gmail.com>"]
 license = "The Unlicense"
 
 [dependencies]
+clap = "2.31"
+
+[dev-dependencies]
+tempdir = "0.3"

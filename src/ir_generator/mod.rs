@@ -48,7 +48,7 @@ impl IRGen {
         // is_vararg (always 2 for top level function )
         if let Node::Block(ref block) = *node {
             self.visit_function(block, None, &vec![], true)
-                .map(|mut func| self.root_function = func.prototype)
+                .map(|func| self.root_function = func.prototype)
         } else {
             // can not find entry block
             Err(CompileError::SyntexError)
@@ -56,13 +56,13 @@ impl IRGen {
     }
     /// visit function body, ret: upvalue_num, prototype
     /// assuming scope is newly initiated
-    fn visit_function(&mut self,
-                      block: &Block,
-                      parent_alloc: Option<&mut ResourceAlloc>,
-                      paras: &Vec<Name>,
-                      is_vararg: bool)
-                      -> Result<FunctionPrototype, CompileError> {
-
+    fn visit_function(
+        &mut self,
+        block: &Block,
+        parent_alloc: Option<&mut ResourceAlloc>,
+        paras: &Vec<Name>,
+        is_vararg: bool,
+    ) -> Result<FunctionPrototype, CompileError> {
         let mut res_alloc = ResourceAlloc::new().parent(if parent_alloc.is_some() {
             parent_alloc.unwrap() as *mut ResourceAlloc
         } else {
@@ -96,16 +96,20 @@ impl IRGen {
         // list of function prototypes
         func_chunk.funclist_len = res_alloc.function_alloc.size() as Usize;
         func_chunk.function_prototypes = res_alloc.function_alloc.get_function_prototypes();
-        Ok(FunctionPrototype::new(func_chunk, res_alloc.upvalue_alloc.into_list()))
+        Ok(FunctionPrototype::new(
+            func_chunk,
+            res_alloc.upvalue_alloc.into_list(),
+        ))
     }
 
     /// ret: number of returned
     /// None means no return stat
-    fn visit_block(&mut self,
-                   block: &Block,
-                   res_alloc: &mut ResourceAlloc,
-                   instructions: &mut Vec<OpMode>)
-                   -> Result<(), CompileError> {
+    fn visit_block(
+        &mut self,
+        block: &Block,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+    ) -> Result<(), CompileError> {
         for stat in &block.stats {
             self.visit_stat(stat, res_alloc, instructions)?;
         }
@@ -114,15 +118,15 @@ impl IRGen {
             self.visit_stat(&Stat::Ret(ret_exprs.clone()), res_alloc, instructions)?;
         }
         Ok(())
-
     }
 
     /// ret:
-    fn visit_stat(&mut self,
-                  stat: &Stat,
-                  res_alloc: &mut ResourceAlloc,
-                  instructions: &mut Vec<OpMode>)
-                  -> Result<(), CompileError> {
+    fn visit_stat(
+        &mut self,
+        stat: &Stat,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+    ) -> Result<(), CompileError> {
         match *stat {
             // could be global or local`
             Stat::Assign(ref varlist, ref exprlist) => {
@@ -139,21 +143,24 @@ impl IRGen {
                         Var::Name(ref name) => {
                             // lookup , confirm if symbol is already defined
                             match self.symbol_table.lookup(name) {
-                                Some((SymbolScope::Global, _)) |
-                                None => {
+                                Some((SymbolScope::Global, _)) | None => {
                                     let const_pos = self.prepare_global_value(name, res_alloc); /* add name to const list and define global symbol */
                                     let (_, reg) =
                                         self.visit_r_expr(expr, res_alloc, instructions, None)?;
-                                    IRGen::emit_iABx(instructions,
-                                                     OpName::SETGLOBAL,
-                                                     reg,
-                                                     const_pos);
+                                    IRGen::emit_iABx(
+                                        instructions,
+                                        OpName::SETGLOBAL,
+                                        reg,
+                                        const_pos,
+                                    );
                                 }
                                 Some((SymbolScope::Local, pos)) => {
-                                    self.visit_r_expr(expr,
-                                                      res_alloc,
-                                                      instructions,
-                                                      Some(Expect::Reg(pos)))?;
+                                    self.visit_r_expr(
+                                        expr,
+                                        res_alloc,
+                                        instructions,
+                                        Some(Expect::Reg(pos)),
+                                    )?;
                                 }
                                 Some((SymbolScope::UpValue(_), _)) => unimplemented!(),
                             }
@@ -173,8 +180,9 @@ impl IRGen {
                 let (namelist, exprlist) =
                     self.adjust_list(namelist, exprlist, res_alloc, instructions)?;
                 let reg_list = self.visit_r_exprlist(&exprlist, res_alloc, instructions)?;
-                for (ref name, (is_temp, expr_reg)) in namelist.into_iter()
-                    .zip(reg_list.into_iter()) {
+                for (ref name, (is_temp, expr_reg)) in
+                    namelist.into_iter().zip(reg_list.into_iter())
+                {
                     if is_temp {
                         res_alloc.reg_alloc.push_set(name, expr_reg);
                         self.symbol_table.define_local(name, expr_reg);
@@ -188,8 +196,9 @@ impl IRGen {
             }
             Stat::Ret(ref exprlist) => {
                 // first: allocate a chunk of conjective registers
-                let reg_list =
-                    (0..exprlist.len()).map(|_| res_alloc.reg_alloc.push(None)).collect::<Vec<_>>();
+                let reg_list = (0..exprlist.len())
+                    .map(|_| res_alloc.reg_alloc.push(None))
+                    .collect::<Vec<_>>();
                 // if is void return, start_register is not needed
                 let ret_num = reg_list.len(); // save moved value
                 let start_register = if ret_num > 0 { reg_list[0] } else { 0 };
@@ -200,11 +209,13 @@ impl IRGen {
                 // return statement
                 // if B == 1, no expr returned
                 // if B >= 1 return R(start_register) .. R(start_register + B - 2)
-                IRGen::emit_iABC(instructions,
-                                 OpName::RETURN,
-                                 start_register,
-                                 (ret_num + 1) as u32,
-                                 0);
+                IRGen::emit_iABC(
+                    instructions,
+                    OpName::RETURN,
+                    start_register,
+                    (ret_num + 1) as u32,
+                    0,
+                );
                 Ok(())
             }
             Stat::IfElse(ref test_expr, ref then_block, ref else_block) => {
@@ -214,12 +225,13 @@ impl IRGen {
                     let else_label = res_alloc.label_alloc.new_label();
                     let next_label = res_alloc.label_alloc.new_label();
                     // jmp is not needed for then_block
-                    let mut raw =
-                        self.visit_boolean_expr(test_expr,
-                                                res_alloc,
-                                                then_label,
-                                                else_label,
-                                                false)?;
+                    let mut raw = self.visit_boolean_expr(
+                        test_expr,
+                        res_alloc,
+                        then_label,
+                        else_label,
+                        false,
+                    )?;
                     raw.push(OpMode::Label(then_label));
                     self.visit_block(then_block, res_alloc, &mut raw)?;
                     raw.push(OpMode::rJMP(next_label));
@@ -232,12 +244,13 @@ impl IRGen {
                     // if else
                     let then_label = res_alloc.label_alloc.new_label();
                     let next_label = res_alloc.label_alloc.new_label();
-                    let mut raw =
-                        self.visit_boolean_expr(test_expr,
-                                                res_alloc,
-                                                then_label,
-                                                next_label,
-                                                false)?;
+                    let mut raw = self.visit_boolean_expr(
+                        test_expr,
+                        res_alloc,
+                        then_label,
+                        next_label,
+                        false,
+                    )?;
                     raw.push(OpMode::Label(then_label));
                     self.visit_block(then_block, res_alloc, &mut raw)?;
                     raw.push(OpMode::Label(next_label));
@@ -253,7 +266,13 @@ impl IRGen {
                 // set exit for Break stat
                 res_alloc.set_loop_exit(next_label);
                 let mut raw = vec![OpMode::Label(begin_label)];
-                raw.append(&mut self.visit_boolean_expr(test_expr, res_alloc, do_label, next_label, false)?);
+                raw.append(&mut self.visit_boolean_expr(
+                    test_expr,
+                    res_alloc,
+                    do_label,
+                    next_label,
+                    false,
+                )?);
                 raw.push(OpMode::Label(do_label));
                 self.visit_block(do_block, res_alloc, &mut raw)?;
                 raw.push(OpMode::rJMP(begin_label));
@@ -300,24 +319,24 @@ impl IRGen {
                     Err(CompileError::SyntexError)
                 }
             }
-            Stat::GeneralCall(ref func_name, ref args, is_vararg) => {
-                self.visit_general_call(func_name,
-                                        args,
-                                        is_vararg,
-                                        RetExpect::Num(0),
-                                        res_alloc,
-                                        instructions)
-                    .and(Ok(()))
-            }
+            Stat::GeneralCall(ref func_name, ref args, is_vararg) => self.visit_general_call(
+                func_name,
+                args,
+                is_vararg,
+                RetExpect::Num(0),
+                res_alloc,
+                instructions,
+            ).and(Ok(())),
             Stat::ColonCall(ref table_expr, ref func_name, ref args, is_vararg) => {
-                self.visit_colon_call(table_expr,
-                                      func_name,
-                                      args,
-                                      is_vararg,
-                                      RetExpect::Num(0),
-                                      res_alloc,
-                                      instructions)
-                    .and(Ok(()))
+                self.visit_colon_call(
+                    table_expr,
+                    func_name,
+                    args,
+                    is_vararg,
+                    RetExpect::Num(0),
+                    res_alloc,
+                    instructions,
+                ).and(Ok(()))
             }
             _ => unimplemented!(),
         }
@@ -325,12 +344,13 @@ impl IRGen {
 
     /// ret: (is_temp, a register hold the value)
     /// expect: where the result should be stored or how many result should be returned
-    fn visit_r_expr(&mut self,
-                    expr: &Expr,
-                    res_alloc: &mut ResourceAlloc,
-                    instructions: &mut Vec<OpMode>,
-                    expect: Option<Expect>)
-                    -> Result<(bool, Usize), CompileError> {
+    fn visit_r_expr(
+        &mut self,
+        expr: &Expr,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+        expect: Option<Expect>,
+    ) -> Result<(bool, Usize), CompileError> {
         match *expr {
             Expr::Nil => {
                 let reg = if let Some(expect) = extract_expect_reg(expect)? {
@@ -380,32 +400,32 @@ impl IRGen {
                             self.reg_constid_merge(left, res_alloc, instructions, None)?;
                         let (_, right_reg) =
                             self.reg_constid_merge(right, res_alloc, instructions, None)?;
-                        let op = self.flag_to_op.get(&flag).expect("BinOp not defined").clone();
+                        let op = self.flag_to_op
+                            .get(&flag)
+                            .expect("BinOp not defined")
+                            .clone();
                         // destructive op only generate for temp register
-                        let (result_is_temp, result_reg) = if let Some(expect) =
-                                                                  extract_expect_reg(expect)? {
-                            (false, expect)
-                        } else {
-                            if is_temp {
-                                (true, left_reg)
+                        let (result_is_temp, result_reg) =
+                            if let Some(expect) = extract_expect_reg(expect)? {
+                                (false, expect)
                             } else {
-                                (true, res_alloc.reg_alloc.push(None))
-                            }
-                        };
+                                if is_temp {
+                                    (true, left_reg)
+                                } else {
+                                    (true, res_alloc.reg_alloc.push(None))
+                                }
+                            };
                         IRGen::emit_iABC(instructions, op, result_reg, left_reg, right_reg);
                         Ok((result_is_temp, result_reg))
                     }
                     _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
-
                 }
             }
-            Expr::UnaryOp(op, ref left) => {
-                match op {
-                    FlagType::Minus => unimplemented!(),
-                    FlagType::Plus => self.visit_r_expr(left, res_alloc, instructions, expect),
-                    _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
-                }
-            }
+            Expr::UnaryOp(op, ref left) => match op {
+                FlagType::Minus => unimplemented!(),
+                FlagType::Plus => self.visit_r_expr(left, res_alloc, instructions, expect),
+                _ => self.visit_logic_arith(expr, res_alloc, instructions, expect),
+            },
             Expr::Var(ref var) => {
                 self.visit_var(var, res_alloc, instructions, extract_expect_reg(expect)?)
             }
@@ -438,56 +458,61 @@ impl IRGen {
                 Ok((true, reg))
             }
             Expr::GeneralCall(ref expr, ref args, is_vararg) => {
-                let central_reg = self.visit_general_call(expr,
-                                        args,
-                                        is_vararg,
-                                        RetExpect::Num(1),
-                                        res_alloc,
-                                        instructions)?;
+                let central_reg = self.visit_general_call(
+                    expr,
+                    args,
+                    is_vararg,
+                    RetExpect::Num(1),
+                    res_alloc,
+                    instructions,
+                )?;
                 Ok((true, central_reg))
             }
-            Expr::ColonCall(ref table_expr, ref func_name, ref args, is_vararg) => unimplemented!(),
+            Expr::ColonCall(ref _table_expr, ref _func_name, ref _args, _is_vararg) => unimplemented!(),
 
             Expr::TableCtor(ref entrys) => {
                 self.visit_table_ctor(entrys, res_alloc, instructions, expect)
             }
             Expr::TableRef(ref table, ref key) => {
                 self.visit_table_ref(table, key, res_alloc, instructions, expect)
-            }
-            // _ => {
-            //     println!("Unmatched expr: {:?}", expr);
-            //     unimplemented!();
-            // }
+            } // _ => {
+              //     println!("Unmatched expr: {:?}", expr);
+              //     unimplemented!();
+              // }
         }
     }
 
-    fn visit_l_expr(&mut self,
-                    expr: &Expr,
-                    value_creg: u32,
-                    res_alloc: &mut ResourceAlloc,
-                    instructions: &mut Vec<OpMode>)
-                    -> Result<(), CompileError> {
+    fn visit_l_expr(
+        &mut self,
+        expr: &Expr,
+        value_creg: u32,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+    ) -> Result<(), CompileError> {
         match *expr {
             Expr::TableRef(ref table, ref key) => {
                 let (_, table_reg) = self.visit_r_expr(table, res_alloc, instructions, None)?;
                 let key_creg = self.visit_table_key(key, res_alloc, instructions)?;
-                IRGen::emit_iABC(instructions,
-                                 OpName::SETTABLE,
-                                 table_reg,
-                                 key_creg,
-                                 value_creg);
+                IRGen::emit_iABC(
+                    instructions,
+                    OpName::SETTABLE,
+                    table_reg,
+                    key_creg,
+                    value_creg,
+                );
             }
             _ => unimplemented!(),
         }
         Ok(())
     }
 
-    fn visit_logic_arith(&mut self,
-                         expr: &Expr,
-                         res_alloc: &mut ResourceAlloc,
-                         instruction: &mut Vec<OpMode>,
-                         expect: Option<Expect>)
-                         -> Result<(bool, u32), CompileError> {
+    fn visit_logic_arith(
+        &mut self,
+        expr: &Expr,
+        res_alloc: &mut ResourceAlloc,
+        instruction: &mut Vec<OpMode>,
+        expect: Option<Expect>,
+    ) -> Result<(bool, u32), CompileError> {
         let result_reg = if let Some(expect) = extract_expect_reg(expect)? {
             expect
         } else {
@@ -505,30 +530,33 @@ impl IRGen {
         Ok((true, result_reg))
     }
 
-    fn visit_boolean_expr(&mut self,
-                          expr: &Expr,
-                          res_alloc: &mut ResourceAlloc,
-                          true_br: Label,
-                          false_br: Label,
-                          fall_through: bool)
-                          -> Result<Vec<OpMode>, CompileError> {
+    fn visit_boolean_expr(
+        &mut self,
+        expr: &Expr,
+        res_alloc: &mut ResourceAlloc,
+        true_br: Label,
+        false_br: Label,
+        fall_through: bool,
+    ) -> Result<Vec<OpMode>, CompileError> {
         match *expr {
             Expr::BinOp(op, ref left, ref right) => {
                 match op {
                     FlagType::OR => {
                         let label_for_right = res_alloc.label_alloc.new_label();
-                        let mut left_raw =
-                            self.visit_boolean_expr(left,
-                                                    res_alloc,
-                                                    true_br,
-                                                    label_for_right,
-                                                    true)?;
-                        let mut right_raw =
-                            self.visit_boolean_expr(right,
-                                                    res_alloc,
-                                                    true_br,
-                                                    false_br,
-                                                    fall_through)?;
+                        let mut left_raw = self.visit_boolean_expr(
+                            left,
+                            res_alloc,
+                            true_br,
+                            label_for_right,
+                            true,
+                        )?;
+                        let mut right_raw = self.visit_boolean_expr(
+                            right,
+                            res_alloc,
+                            true_br,
+                            false_br,
+                            fall_through,
+                        )?;
                         // merge
                         left_raw.push(OpMode::Label(label_for_right));
                         left_raw.append(&mut right_raw);
@@ -536,27 +564,35 @@ impl IRGen {
                     }
                     FlagType::AND => {
                         let label_for_right = res_alloc.label_alloc.new_label();
-                        let mut left_raw =
-                            self.visit_boolean_expr(left,
-                                                    res_alloc,
-                                                    label_for_right,
-                                                    false_br,
-                                                    false)?;
-                        let mut right_raw =
-                            self.visit_boolean_expr(right,
-                                                    res_alloc,
-                                                    true_br,
-                                                    false_br,
-                                                    fall_through)?;
+                        let mut left_raw = self.visit_boolean_expr(
+                            left,
+                            res_alloc,
+                            label_for_right,
+                            false_br,
+                            false,
+                        )?;
+                        let mut right_raw = self.visit_boolean_expr(
+                            right,
+                            res_alloc,
+                            true_br,
+                            false_br,
+                            fall_through,
+                        )?;
                         left_raw.push(OpMode::Label(label_for_right));
                         left_raw.append(&mut right_raw);
                         Ok(left_raw)
                     }
-                    FlagType::LESS | FlagType::LEQ | FlagType::GREATER | FlagType::GEQ |
-                    FlagType::EQ | FlagType::NEQ => {
+                    FlagType::LESS
+                    | FlagType::LEQ
+                    | FlagType::GREATER
+                    | FlagType::GEQ
+                    | FlagType::EQ
+                    | FlagType::NEQ => {
                         let mut raw = vec![];
-                        let (_, left_reg) = self.reg_constid_merge(left, res_alloc, &mut raw, None)?;
-                        let (_, right_reg) = self.reg_constid_merge(right, res_alloc, &mut raw, None)?;
+                        let (_, left_reg) =
+                            self.reg_constid_merge(left, res_alloc, &mut raw, None)?;
+                        let (_, right_reg) =
+                            self.reg_constid_merge(right, res_alloc, &mut raw, None)?;
                         let (op_name, test_bool) = match op {
                             FlagType::LESS => (OpName::LT, true),
                             FlagType::LEQ => (OpName::LE, true),
@@ -580,14 +616,12 @@ impl IRGen {
                     _ => panic!("expression not accept as boolean"),
                 }
             }
-            Expr::UnaryOp(op, ref left) => {
-                match op {
-                    FlagType::Not => {
-                        self.visit_boolean_expr(left, res_alloc, false_br, true_br, !fall_through)
-                    }
-                    _ => panic!("expression not accept as boolean"),
+            Expr::UnaryOp(op, ref left) => match op {
+                FlagType::Not => {
+                    self.visit_boolean_expr(left, res_alloc, false_br, true_br, !fall_through)
                 }
-            }
+                _ => panic!("expression not accept as boolean"),
+            },
             Expr::Var(ref var) => {
                 let mut raw = vec![];
                 let (_, reg) = self.visit_var(var, res_alloc, &mut raw, None)?;
@@ -595,7 +629,7 @@ impl IRGen {
                     // fall to true path
                     raw.push(OpMode::iABx(OpName::TEST, reg, 1));
                     raw.push(OpMode::rJMP(true_br));
-                    // IRGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
+                // IRGen::emit_iAsBx(&mut raw, OpName::JMP, 0, false_br);
                 } else {
                     // fall to false path
                     raw.push(OpMode::iABx(OpName::TEST, reg, 0));
@@ -618,12 +652,14 @@ impl IRGen {
         }
     }
 
-    fn visit_r_exprlist(&mut self,
-                        exprlist: &Vec<Expr>,
-                        res_alloc: &mut ResourceAlloc,
-                        instructions: &mut Vec<OpMode>)
-                        -> Result<Vec<(bool, u32)>, CompileError> {
-        let reg_list = exprlist.into_iter()
+    fn visit_r_exprlist(
+        &mut self,
+        exprlist: &Vec<Expr>,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+    ) -> Result<Vec<(bool, u32)>, CompileError> {
+        let reg_list = exprlist
+            .into_iter()
             .map(|expr| self.visit_r_expr(expr, res_alloc, instructions, None))
             .filter(|r| r.is_ok())
             .map(|r| r.unwrap())
@@ -636,16 +672,20 @@ impl IRGen {
     }
 
     /// ret: (is_temp, register saves the varible)
-    fn visit_var(&mut self,
-                 var: &Var,
-                 res_alloc: &mut ResourceAlloc,
-                 instructions: &mut Vec<OpMode>,
-                 expect_reg: Option<u32>)
-                 -> Result<(bool, Usize), CompileError> {
+    fn visit_var(
+        &mut self,
+        var: &Var,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+        expect_reg: Option<u32>,
+    ) -> Result<(bool, Usize), CompileError> {
         match *var {
             Var::Name(ref name) => {
-                let (scope, pos) =
-                    try!(self.symbol_table.lookup(name).ok_or(CompileError::UndefinedSymbol));
+                let (scope, pos) = try!(
+                    self.symbol_table
+                        .lookup(name)
+                        .ok_or(CompileError::UndefinedSymbol)
+                );
                 match scope {
                     SymbolScope::Global => {
                         let const_pos = res_alloc.const_alloc.push(ConstType::Str(name.clone()));
@@ -666,10 +706,12 @@ impl IRGen {
                             res_alloc.reg_alloc.push(None)
                         };
                         // todo: optimize, reduce register number
-                        IRGen::emit_iABx(instructions,
-                                         OpName::GETUPVAL,
-                                         reg,
-                                         immidiate_upvalue_pos);
+                        IRGen::emit_iABx(
+                            instructions,
+                            OpName::GETUPVAL,
+                            reg,
+                            immidiate_upvalue_pos,
+                        );
                         Ok((true, reg))
                     }
                     SymbolScope::Local => {
@@ -688,18 +730,19 @@ impl IRGen {
                 }
             }
             Var::Reg(reg) => Ok((true, reg)),
-            Var::PrefixExp(ref expr) => unimplemented!(),
+            Var::PrefixExp(ref _expr) => unimplemented!(),
         }
     }
 
-    fn visit_general_call(&mut self,
-                          expr: &Expr,
-                          args: &Vec<Expr>,
-                          is_vararg: bool,
-                          expect_ret: RetExpect,
-                          res_alloc: &mut ResourceAlloc,
-                          instructions: &mut Vec<OpMode>)
-                          -> Result<u32, CompileError> {
+    fn visit_general_call(
+        &mut self,
+        expr: &Expr,
+        args: &Vec<Expr>,
+        _is_vararg: bool,
+        expect_ret: RetExpect,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+    ) -> Result<u32, CompileError> {
         // todo: vararg
         // get function name
         let func_pos = res_alloc.reg_alloc.push(None);
@@ -725,15 +768,16 @@ impl IRGen {
         Ok(func_pos)
     }
 
-    fn visit_colon_call(&mut self,
-                        table_expr: &Expr,
-                        func_name: &Name,
-                        args: &Vec<Expr>,
-                        is_vararg: bool,
-                        expect_ret: RetExpect,
-                        res_alloc: &mut ResourceAlloc,
-                        instructions: &mut Vec<OpMode>)
-                        -> Result<u32, CompileError> {
+    fn visit_colon_call(
+        &mut self,
+        table_expr: &Expr,
+        func_name: &Name,
+        args: &Vec<Expr>,
+        _is_vararg: bool,
+        expect_ret: RetExpect,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+    ) -> Result<u32, CompileError> {
         // make
         let func_pos = res_alloc.reg_alloc.push(None);
         let table_pos = res_alloc.reg_alloc.push(None);
@@ -751,13 +795,17 @@ impl IRGen {
                 ret_field = 0;
             }
         }
-        self.visit_r_expr(table_expr,
-                          res_alloc,
-                          instructions,
-                          Some(Expect::Reg(table_pos)))?;
-        let name_pos = self.visit_table_key(&Expr::Var(Var::Name(func_name.clone())),
-                             res_alloc,
-                             instructions)?;
+        self.visit_r_expr(
+            table_expr,
+            res_alloc,
+            instructions,
+            Some(Expect::Reg(table_pos)),
+        )?;
+        let name_pos = self.visit_table_key(
+            &Expr::Var(Var::Name(func_name.clone())),
+            res_alloc,
+            instructions,
+        )?;
         IRGen::emit_iABC(instructions, OpName::SELF, func_pos, table_pos, name_pos);
         arg_field = match self.visit_args(args, func_pos, res_alloc, instructions)? {
             0 => 0,
@@ -767,12 +815,13 @@ impl IRGen {
         Ok(func_pos)
     }
 
-    fn visit_args(&mut self,
-                  args: &Vec<Expr>,
-                  func_pos: u32,
-                  res_alloc: &mut ResourceAlloc,
-                  instructions: &mut Vec<OpMode>)
-                  -> Result<u32, CompileError> {
+    fn visit_args(
+        &mut self,
+        args: &Vec<Expr>,
+        func_pos: u32,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+    ) -> Result<u32, CompileError> {
         let mut args_reg = func_pos + 1;
         let arg_field;
         if args.is_empty() {
@@ -780,35 +829,44 @@ impl IRGen {
         }
         if let Expr::GeneralCall(ref t_func, ref t_args, t_is_vararg) = args[args.len() - 1] {
             for i in 0..(args.len() - 1) {
-                self.visit_r_expr(&args[i],
-                                  res_alloc,
-                                  instructions,
-                                  Some(Expect::Reg(args_reg)))?;
+                self.visit_r_expr(
+                    &args[i],
+                    res_alloc,
+                    instructions,
+                    Some(Expect::Reg(args_reg)),
+                )?;
                 args_reg += 1;
             }
-            self.visit_general_call(t_func,
-                                    t_args,
-                                    t_is_vararg,
-                                    RetExpect::Indeterminate,
-                                    res_alloc,
-                                    instructions)?;
+            self.visit_general_call(
+                t_func,
+                t_args,
+                t_is_vararg,
+                RetExpect::Indeterminate,
+                res_alloc,
+                instructions,
+            )?;
             arg_field = 0;
         } else if let Expr::ColonCall(ref t_table, ref t_func_name, ref t_args, t_is_vararg) =
-                      args[args.len() - 1] {
+            args[args.len() - 1]
+        {
             for i in 0..(args.len() - 1) {
-                self.visit_r_expr(&args[i],
-                                  res_alloc,
-                                  instructions,
-                                  Some(Expect::Reg(args_reg)))?;
+                self.visit_r_expr(
+                    &args[i],
+                    res_alloc,
+                    instructions,
+                    Some(Expect::Reg(args_reg)),
+                )?;
                 args_reg += 1;
             }
-            self.visit_colon_call(t_table,
-                                  t_func_name,
-                                  t_args,
-                                  t_is_vararg,
-                                  RetExpect::Indeterminate,
-                                  res_alloc,
-                                  instructions)?;
+            self.visit_colon_call(
+                t_table,
+                t_func_name,
+                t_args,
+                t_is_vararg,
+                RetExpect::Indeterminate,
+                res_alloc,
+                instructions,
+            )?;
             arg_field = 0;
         } else {
             for expr in args {
@@ -820,12 +878,13 @@ impl IRGen {
         Ok(arg_field)
     }
 
-    fn adjust_list<T: Clone>(&mut self,
-                             varlist: &Vec<T>,
-                             exprlist: &Vec<Expr>,
-                             res_alloc: &mut ResourceAlloc,
-                             instructions: &mut Vec<OpMode>)
-                             -> Result<(Vec<T>, Vec<Expr>), CompileError> {
+    fn adjust_list<T: Clone>(
+        &mut self,
+        varlist: &Vec<T>,
+        exprlist: &Vec<Expr>,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+    ) -> Result<(Vec<T>, Vec<Expr>), CompileError> {
         // balanced
         if varlist.len() == exprlist.len() {
             return Ok((varlist.clone(), exprlist.clone()));
@@ -842,12 +901,14 @@ impl IRGen {
         else {
             if exprlist.len() == 1 {
                 if let Expr::GeneralCall(ref expr, ref args, is_vararg) = exprlist[0] {
-                    let central_reg = self.visit_general_call(expr,
-                                            args,
-                                            is_vararg,
-                                            RetExpect::Num(varlist.len() as u32),
-                                            res_alloc,
-                                            instructions)?;
+                    let central_reg = self.visit_general_call(
+                        expr,
+                        args,
+                        is_vararg,
+                        RetExpect::Num(varlist.len() as u32),
+                        res_alloc,
+                        instructions,
+                    )?;
                     let expr_regs = (central_reg..(central_reg + varlist.len() as u32))
                         .map(|reg| Expr::Var(Var::Reg(reg)))
                         .collect();
@@ -868,13 +929,14 @@ impl IRGen {
         }
     }
 
-    fn visit_table_ref(&mut self,
-                       table: &Expr,
-                       key: &Expr,
-                       res_alloc: &mut ResourceAlloc,
-                       instructions: &mut Vec<OpMode>,
-                       expect: Option<Expect>)
-                       -> Result<(bool, u32), CompileError> {
+    fn visit_table_ref(
+        &mut self,
+        table: &Expr,
+        key: &Expr,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+        expect: Option<Expect>,
+    ) -> Result<(bool, u32), CompileError> {
         let reg = if let Some(expect) = extract_expect_reg(expect)? {
             expect
         } else {
@@ -886,11 +948,12 @@ impl IRGen {
         Ok((true, reg))
     }
 
-    fn visit_table_key(&mut self,
-                       key: &Expr,
-                       res_alloc: &mut ResourceAlloc,
-                       instructions: &mut Vec<OpMode>)
-                       -> Result<u32, CompileError> {
+    fn visit_table_key(
+        &mut self,
+        key: &Expr,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+    ) -> Result<u32, CompileError> {
         match key {
             &Expr::Var(Var::Name(ref name)) => {
                 Ok(0x100 | res_alloc.const_alloc.push(ConstType::Str(name.clone())))
@@ -902,12 +965,13 @@ impl IRGen {
         }
     }
 
-    fn visit_table_ctor(&mut self,
-                        entrys: &Vec<TableEntry>,
-                        res_alloc: &mut ResourceAlloc,
-                        instructions: &mut Vec<OpMode>,
-                        expect: Option<Expect>)
-                        -> Result<(bool, u32), CompileError> {
+    fn visit_table_ctor(
+        &mut self,
+        entrys: &Vec<TableEntry>,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+        expect: Option<Expect>,
+    ) -> Result<(bool, u32), CompileError> {
         // create table
         let result_reg = if let Some(expect) = extract_expect_reg(expect)? {
             expect
@@ -921,11 +985,13 @@ impl IRGen {
         }
         let (hash_part, array_part) = Self::split_table_entrys(entrys);
 
-        IRGen::emit_iABC(instructions,
-                         OpName::NEWTABLE,
-                         result_reg,
-                         array_part.len().to_f8(),
-                         hash_part.len().to_f8());
+        IRGen::emit_iABC(
+            instructions,
+            OpName::NEWTABLE,
+            result_reg,
+            array_part.len().to_f8(),
+            hash_part.len().to_f8(),
+        );
 
         // add elements in the array_part
         // fine, I'll follow the standard
@@ -945,44 +1011,54 @@ impl IRGen {
             // reuse register pool in each flush
             let mut dest_reg = result_reg + 1;
             for _ in 0..LFIELDS_PER_FLUSH {
-                self.visit_r_expr(&iter.next().unwrap(),
-                                  res_alloc,
-                                  instructions,
-                                  Some(Expect::Reg(dest_reg)))?;
+                self.visit_r_expr(
+                    &iter.next().unwrap(),
+                    res_alloc,
+                    instructions,
+                    Some(Expect::Reg(dest_reg)),
+                )?;
                 dest_reg += 1;
             }
             // FIXME: consider when flush_id is too large to encode
-            IRGen::emit_iABC(instructions,
-                             OpName::SETLIST,
-                             result_reg,
-                             LFIELDS_PER_FLUSH,
-                             flush_id + 1);
+            IRGen::emit_iABC(
+                instructions,
+                OpName::SETLIST,
+                result_reg,
+                LFIELDS_PER_FLUSH,
+                flush_id + 1,
+            );
         }
         // then finish residue part
         let mut dest_reg = result_reg + 1;
         for _ in 0..residue_num {
-            self.visit_r_expr(&iter.next().unwrap(),
-                              res_alloc,
-                              instructions,
-                              Some(Expect::Reg(dest_reg)))?;
+            self.visit_r_expr(
+                &iter.next().unwrap(),
+                res_alloc,
+                instructions,
+                Some(Expect::Reg(dest_reg)),
+            )?;
             dest_reg += 1;
         }
         if residue_num > 0 {
-            IRGen::emit_iABC(instructions,
-                             OpName::SETLIST,
-                             result_reg,
-                             residue_num,
-                             flush_num + 1);
+            IRGen::emit_iABC(
+                instructions,
+                OpName::SETLIST,
+                result_reg,
+                residue_num,
+                flush_num + 1,
+            );
         }
         // add pairs in the hash_part
         for (key, value) in hash_part {
             let key_rkc = self.visit_table_key(&key, res_alloc, instructions)?;
             let (_, value_rkc) = self.reg_constid_merge(&value, res_alloc, instructions, None)?;
-            IRGen::emit_iABC(instructions,
-                             OpName::SETTABLE,
-                             result_reg,
-                             key_rkc,
-                             value_rkc);
+            IRGen::emit_iABC(
+                instructions,
+                OpName::SETTABLE,
+                result_reg,
+                key_rkc,
+                value_rkc,
+            );
         }
         Ok((true, result_reg))
     }
@@ -1035,38 +1111,45 @@ impl IRGen {
     /// 8bit as num field
     /// signed (1) for const_id
     /// unsigned (0) for register
-    fn reg_constid_merge(&mut self,
-                         expr: &Expr,
-                         res_alloc: &mut ResourceAlloc,
-                         instructions: &mut Vec<OpMode>,
-                         expect: Option<Expect>)
-                         -> Result<(bool, u32), CompileError> {
+    fn reg_constid_merge(
+        &mut self,
+        expr: &Expr,
+        res_alloc: &mut ResourceAlloc,
+        instructions: &mut Vec<OpMode>,
+        expect: Option<Expect>,
+    ) -> Result<(bool, u32), CompileError> {
         let reg_or_const = match expr {
-            &Expr::Num(num) => (false, 0x100 | res_alloc.const_alloc.push(ConstType::Real(num))),
-            &Expr::Boole(boolean) => {
-                (false, 0x100 | res_alloc.const_alloc.push(ConstType::Boole(boolean)))
-            } 
-            &Expr::Str(ref s) => {
-                (false, 0x100 | res_alloc.const_alloc.push(ConstType::Str(s.clone())))
-            }
+            &Expr::Num(num) => (
+                false,
+                0x100 | res_alloc.const_alloc.push(ConstType::Real(num)),
+            ),
+            &Expr::Boole(boolean) => (
+                false,
+                0x100 | res_alloc.const_alloc.push(ConstType::Boole(boolean)),
+            ),
+            &Expr::Str(ref s) => (
+                false,
+                0x100 | res_alloc.const_alloc.push(ConstType::Str(s.clone())),
+            ),
             _ => self.visit_r_expr(expr, res_alloc, instructions, expect)?,
         };
         Ok(reg_or_const)
     }
 }
 
-// #[cfg(test)]
+#[cfg(test)]
 pub mod tests {
     use super::*;
     use parser::Parser;
     use std::str::Chars;
     #[test]
     pub fn global_arith() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             a, b = 2.5 , 2 * 4
             local c = (a + b) / 10.5
-        "))
-            .unwrap();
+        ",
+        )).unwrap();
 
         let mut compiler = IRGen::new();
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
@@ -1074,48 +1157,52 @@ pub mod tests {
 
     #[test]
     fn function_def() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             local a = 2
             func = function()
                 local b = 3 
                 return a + b, b + a
             end
-        "))
-            .unwrap();
+        ",
+        )).unwrap();
 
         let mut compiler = IRGen::new();
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
     }
 
-    // #[test]
+    #[test]
     pub fn function_call() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             local a = 2
             func = function(para)
                 return a + para, 0
             end
             local b, c = func(1, 2)
             local d = b + c
-        "))
-            .unwrap();
+        ",
+        )).unwrap();
         let mut compiler = IRGen::new();
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
         // println!("{:?}", compiler.root_function);
     }
     #[test]
     pub fn boolean() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             local a, b = true, false
             local c = not ( 2 <= 3 or a == b )
-        "))
-            .unwrap();
+        ",
+        )).unwrap();
         let mut compiler = IRGen::new();
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
         // println!("{:?}", compiler.root_function);
     }
     #[test]
     pub fn if_else_clause() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             local a, b = true, false
             local c
             if a ~= b and 2 < 3 then
@@ -1125,15 +1212,16 @@ pub mod tests {
             else 
                 c = 2
             end
-        "))
-            .expect("Parse Error");
+        ",
+        )).expect("Parse Error");
         let mut compiler = IRGen::new();
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
         // println!("{:?}", compiler.root_function);
     }
     #[test]
     pub fn while_clause() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             local i, sum = 0, 0
             while i <= 100 do 
                 sum = sum + i
@@ -1142,15 +1230,16 @@ pub mod tests {
                 end
                 i = i + 1
             end
-        "))
-            .expect("Parse Error");
+        ",
+        )).expect("Parse Error");
         let mut compiler = IRGen::new();
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
         // println!("Byte Code: {:?}", compiler.root_function);
     }
     #[test]
     pub fn numeric_for_clause() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             local sum = 0
             for i = 1, 100, 1 do
                 sum = sum + i
@@ -1158,30 +1247,32 @@ pub mod tests {
                     break
                 end
             end
-        "))
-            .expect("Parse Error");
+        ",
+        )).expect("Parse Error");
         let mut compiler = IRGen::new();
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
     #[test]
     pub fn constant_format() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             local a, b, c = 1, 2, 1.5
-        "))
-            .expect("Parse Error");
+        ",
+        )).expect("Parse Error");
         let mut compiler = IRGen::new();
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
     }
     #[test]
     pub fn table_constructor() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             local table = { name = 'Ann', age = 10 + 8, 
                            ['sch' + 'ool'] = 'SEIEE';  
                            1, 2, 3 }
-        "))
-            .expect("Parse Error");
+        ",
+        )).expect("Parse Error");
         let mut compiler = IRGen::new();
         println!("Ast: {:?}", ast);
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
@@ -1189,14 +1280,15 @@ pub mod tests {
     }
     #[test]
     pub fn set_get_table() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             local table = { name = 'Ann' }
             (table)['age'] = 12
             table['subtable'] = { 1, 2 }
             local a, n, sub = table['age'], table['name'], 
                               table['subtable'][1]
-        "))
-            .expect("Parse Error");
+        ",
+        )).expect("Parse Error");
         let mut compiler = IRGen::new();
         println!("Ast: {:?}", ast);
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
@@ -1204,7 +1296,8 @@ pub mod tests {
     }
     #[test]
     pub fn table_func() {
-        let ast = Parser::<Chars>::ast_from_text(&String::from("\
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
             table = nil --Bypass
             local stu = {name='Ann', grades={'A', 'A-', 'B+'}}
 
@@ -1218,11 +1311,24 @@ pub mod tests {
 
             stu.change_name(stu)
             stu.grades:add_grade('C')
-        "))
-            .expect("Parse Error");
+        ",
+        )).expect("Parse Error");
         let mut compiler = IRGen::new();
         println!("Ast: {:?}", ast);
         assert_eq!(compiler.generate_ir(&ast), Ok(()));
         println!("Byte code: {:?}", compiler.root_function);
+    }
+
+    #[test]
+    fn regression_one() {
+        let ast = Parser::<Chars>::ast_from_text(&String::from(
+            "\
+            a = 1 + 2
+            print(a)
+        ",
+        )).expect("Parse error");
+
+        let mut compiler = IRGen::new();
+        assert_eq!(compiler.generate_ir(&ast), Ok(()));
     }
 }

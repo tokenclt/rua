@@ -19,14 +19,14 @@ impl Compiler {
         let mut ir_gen = IRGen::new();
         ir_gen.generate_ir(&ast).expect("Generating IR failed");
 
-        println!("{:?}", ir_gen.get_chunk(source_name));
+        //println!("{:?}", ir_gen.get_chunk(source_name));
 
         let bytecode = Assembler::assemble(ir_gen.get_chunk(source_name))
             .expect("Assemble failed");
         bytecode
     }
 
-    pub fn from_file(path_str: &String) -> ByteCodeVec {
+    pub fn from_file(path_str: &str) -> ByteCodeVec {
         let path = Path::new(path_str);
         let mut file = match File::open(&path) {
             Ok(f) => f,
@@ -44,50 +44,25 @@ impl Compiler {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::process::Command;
-    use std::path::Path;
-    use std::env;
-    use std::fs::{File, OpenOptions};
+    use std::fs::File;
+    use tempdir::TempDir;
 
-    static BC_FILE_LOCATION: &'static str = "src/test_cases";
-    static mut WORD_DIR_SET: bool = false;
-
-    fn write_bytecode(name: &String, bytecode: ByteCodeVec) {
-        let path = Path::new(name);
-        let mut file = match File::create(&path) {
-            Err(why) => panic!("Could not create {}: {}", path.display(), why.description()),
-            Ok(f) => f,
-        };
-        match file.write_all(&bytecode) {
-            Err(why) => {
-                panic!("Could not write to {}: {}",
-                       path.display(),
-                       why.description())
-            }
-            Ok(_) => {}
-        };
-        file.sync_all().expect("Sync failed.");
-    }
-
-    fn setup_dir() {
-        unsafe {
-            if !WORD_DIR_SET {
-                let wdr = env::current_dir().unwrap().join(BC_FILE_LOCATION);
-                assert!(env::set_current_dir(&wdr).is_ok());
-            }
-            WORD_DIR_SET = true;
-        }
-    }
 
     fn run_and_check(name: &String, bytecode: ByteCodeVec, expect: &str) {
-        setup_dir();
-        write_bytecode(name, bytecode);
 
-        let output = Command::new("lua").arg(name).output().expect("Could not run lua.");
+        let tmp_dir = TempDir::new("rua").expect("Failed to create temp dir");
+        let file_path = tmp_dir.path().join(name);
+
+        let mut file = File::create(&file_path).expect("Could not create bytecode file");
+        file.write_all(&bytecode).expect("Failed to write bytecode");
+        file.sync_all().expect("Faild to flush");
+
+        let output = Command::new("lua").arg(file_path).output().expect("Could not run lua.");
         let expect = expect.to_string();
-        println!("Running: {:?}", name);
         assert_eq!(output.stdout, expect.into_bytes());
     }
 

@@ -1,8 +1,8 @@
+#![allow(unused)]
+
 use std::mem::transmute;
-use std::collections::HashMap;
 use std::iter::Iterator;
 use super::opcodes::OpMode;
-use super::opcodes::OpName;
 use super::opcodes::mask_1;
 
 pub type Usize = u32;

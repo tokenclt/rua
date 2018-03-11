@@ -75,6 +75,7 @@ impl<Tit> Buffer<Tit>
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 

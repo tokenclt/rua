@@ -1,5 +1,6 @@
-use std::ops::{DerefMut, Deref};
-use lexer::tokens::{Token, FlagType};
+#![allow(unused)]
+
+use lexer::tokens::{FlagType};
 
 pub type Name = String;
 pub type TableEntry = (Option<Expr>, Expr);

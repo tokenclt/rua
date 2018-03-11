@@ -2,7 +2,6 @@ use lexer::tokens::{Token, FlagType};
 use lexer::{Lexer, TokenIterator};
 use self::types::*;
 use std::iter;
-use std::ops::Deref;
 
 pub mod types;
 
@@ -318,7 +317,7 @@ impl<'a, Tit> Parser<'a, Tit>
         let mut stats: Vec<Stat> = vec![];
         loop {
             let stat = self.stat();
-            // println!("{:?}", stat);
+            //println!("{:?}", stat);
             match stat {
                 Ok(s) => stats.push(s),
                 Err(ParserError::ExpectationUnmeet) => break,
@@ -334,6 +333,8 @@ impl<'a, Tit> Parser<'a, Tit>
     fn stat(&mut self) -> Result<Stat, ParserError> {
         loop {
             let attempt = if let Some(token) = self.peek_clone() {
+                //println!("{:?}", token);
+
                 match token {
                     Token::Flag(FlagType::Semi) => {
                         self.eat(FlagType::Semi).unwrap();
@@ -404,7 +405,7 @@ impl<'a, Tit> Parser<'a, Tit>
 
     /// rule: assign: Varlist = Exprlist
     fn assign(&mut self, first_var: Var) -> Result<Stat, ParserError> {
-        let mut varlist = self.varlist(first_var)?;
+        let varlist = self.varlist(first_var)?;
         if let Ok(_) = self.eat(FlagType::Assign) {
             let mut exprlist = self.exprlist()?;
             Ok(Stat::Assign(varlist, exprlist))
@@ -541,7 +542,6 @@ impl<'a, Tit> Parser<'a, Tit>
         let then_node = Box::new(self.block()?);
         let mut result = Stat::IfElse(expr, then_node, None);
         let mut bottom_clause = &mut result as *mut Stat;
-        let root_clause = bottom_clause;
         // {elseif exp then exp}
         unsafe {
             // bypass borrow checker
@@ -712,7 +712,7 @@ impl<'a, Tit> Parser<'a, Tit>
 
     /// fieldlist ::= field {(, | ;) field} [(, | ;)]
     fn field_list(&mut self) -> Result<Vec<TableEntry>, ParserError> {
-        let mut list = vec![self.field().map_err(|e| ParserError::ExpectationUnmeet)?];
+        let mut list = vec![self.field().map_err(|_| ParserError::ExpectationUnmeet)?];
         while let Some(Token::Flag(flag)) = self.peek_clone() {
             if flag == FlagType::Comma || flag == FlagType::Semi {
                 self.eat(flag).unwrap();

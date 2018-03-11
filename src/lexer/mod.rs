@@ -2,10 +2,8 @@ pub mod tokens;
 pub mod buffer;
 
 use std::iter;
-use std::str;
 use std::collections::HashMap;
 use std::clone::Clone;
-use std::cmp::max;
 use self::tokens::*;
 use self::buffer::Buffer;
 
@@ -30,7 +28,8 @@ impl Lexer {
     }
 
     pub fn tokenize<'a, Tit>(&'a self, text_it: Tit) -> TokenIterator<'a, Tit>
-        where Tit: iter::Iterator<Item = char> + Clone
+    where
+        Tit: iter::Iterator<Item = char> + Clone,
     {
         TokenIterator::new(text_it, &self.keyword_table, &self.operator_table)
     }
@@ -38,7 +37,8 @@ impl Lexer {
 
 #[derive(Clone)]
 pub struct TokenIterator<'a, Tit>
-    where Tit: iter::Iterator<Item = char> + Clone
+where
+    Tit: iter::Iterator<Item = char> + Clone,
 {
     /// A simple ToIterator
     /// used as an iterator
@@ -49,12 +49,14 @@ pub struct TokenIterator<'a, Tit>
 }
 
 impl<'a, Tit> TokenIterator<'a, Tit>
-    where Tit: iter::Iterator<Item = char> + Clone
+where
+    Tit: iter::Iterator<Item = char> + Clone,
 {
-    fn new(it: Tit,
-           kt: &'a HashMap<String, FlagType>,
-           st: &'a HashMap<String, FlagType>)
-           -> TokenIterator<'a, Tit> {
+    fn new(
+        it: Tit,
+        kt: &'a HashMap<String, FlagType>,
+        st: &'a HashMap<String, FlagType>,
+    ) -> TokenIterator<'a, Tit> {
         TokenIterator {
             buffer: Buffer::<Tit>::new(it),
             is_ended: false,
@@ -64,7 +66,8 @@ impl<'a, Tit> TokenIterator<'a, Tit>
     }
 
     fn consume_while<F>(&mut self, predicate: F) -> String
-        where F: Fn(char) -> bool
+    where
+        F: Fn(char) -> bool,
     {
         let mut v = String::new();
         while let Some((true, c)) = self.buffer.peek().map(|c| (predicate(c), c)) {
@@ -104,7 +107,7 @@ impl<'a, Tit> TokenIterator<'a, Tit>
         let start = self.buffer.next().expect("This should never failed");
         let string: String = self.consume_while(|c| c != start && c != '\n');
         //  skip ending
-        if let Some(start) = self.buffer.next() {
+        if let Some(_) = self.buffer.next() {
             Ok(Token::Str(string))
         } else {
             Err(TokenizeError::Error)
@@ -121,11 +124,12 @@ impl<'a, Tit> TokenIterator<'a, Tit>
     }
 
     fn eat(&mut self, ch: char) -> Result<(), TokenizeError> {
-        if let Some(ch) = self.buffer.peek() {
-            self.buffer.next();
-            Ok(())
-        } else {
-            Err(TokenizeError::Error)
+        match self.buffer.peek() {
+            Some(c) if c == ch => {
+                self.buffer.next();
+                Ok(())
+            }
+            _ => Err(TokenizeError::Error),
         }
     }
 
@@ -138,7 +142,8 @@ impl<'a, Tit> TokenIterator<'a, Tit>
 }
 
 impl<'a, Tit> iter::Iterator for TokenIterator<'a, Tit>
-    where Tit: iter::Iterator<Item = char> + Clone
+where
+    Tit: iter::Iterator<Item = char> + Clone,
 {
     type Item = Token;
 
@@ -259,8 +264,10 @@ mod tests {
         assert_eq!(token_it_2.next(), Some(Token::Num(1f64)));
         assert_eq!(token_it_2.next(), Some(Token::Name("str".to_string())));
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Assign)));
-        assert_eq!(token_it_2.next(),
-                   Some(Token::Str("this is a string".to_string())));
+        assert_eq!(
+            token_it_2.next(),
+            Some(Token::Str("this is a string".to_string()))
+        );
 
         assert_eq!(token_it_2.next(), Some(Token::Name("b".to_string())));
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::Comma)));
@@ -272,7 +279,6 @@ mod tests {
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::False)));
         assert_eq!(token_it_2.next(), Some(Token::Flag(FlagType::EOF)));
         assert_eq!(token_it_2.next(), None);
-
     }
 
     #[test]
@@ -294,5 +300,31 @@ mod tests {
         assert_eq!(it.next(), Some(Token::Name("b".to_string())));
         assert_eq!(it.next(), Some(Token::Flag(FlagType::Assign)));
         assert_eq!(it.next(), Some(Token::Num(2f64)));
+    }
+
+    #[test]
+    fn regression_one() {
+        let text = "\
+a = 1 + 2
+print(a)
+"
+            .to_string();
+
+        let tokens = Lexer::new().tokenize(text.chars()).collect::<Vec<_>>();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Name("a".to_string()),
+                Token::Flag(FlagType::Assign),
+                Token::Num(1f64),
+                Token::Flag(FlagType::Plus),
+                Token::Num(2f64),
+                Token::Name("print".to_string()),
+                Token::Flag(FlagType::LParen),
+                Token::Name("a".to_string()),
+                Token::Flag(FlagType::RParen),
+                Token::Flag(FlagType::EOF),
+            ]
+        );
     }
 }

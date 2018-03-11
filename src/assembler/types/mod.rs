@@ -1,4 +1,4 @@
-use ir_generator::types::Usize;
+#![allow(unused)]
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum AsmError {
