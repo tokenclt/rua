@@ -218,11 +218,10 @@ where
 #[cfg(test)]
 mod tests {
     use lexer::*;
-    use lexer::tokens::*;
 
     #[test]
     fn expression_tokenize() {
-        let mut text_1 = "2 * 3 - 2 * ( 3 / 22 + 1 - - 2.22)".to_string();
+        let text_1 = "2 * 3 - 2 * ( 3 / 22 + 1 - - 2.22)".to_string();
         let lexer = Lexer::new();
         let mut token_it_1 = lexer.tokenize(text_1.chars());
         assert_eq!(token_it_1.next(), Some(Token::Num(2f64)));

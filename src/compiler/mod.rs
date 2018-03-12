@@ -19,7 +19,7 @@ impl Compiler {
         let mut ir_gen = IRGen::new();
         ir_gen.generate_ir(&ast).expect("Generating IR failed");
 
-        //println!("{:?}", ir_gen.get_chunk(source_name));
+        println!("{:?}", ir_gen.get_chunk(source_name));
 
         let bytecode = Assembler::assemble(ir_gen.get_chunk(source_name))
             .expect("Assemble failed");
@@ -184,6 +184,46 @@ mod tests {
         let name = "func_play".to_string();
         let bc = Compiler::from_string(&code, &name);
         run_and_check(&name, bc, "3\t-1\r\n");
+    }
+
+    #[test]
+    fn nested_call() {
+        let code = "\
+            add = function(a, b)
+                return a + b
+            end
+
+            sub = function(a, b)
+                return a - b
+            end
+
+            a = sub(add(3, 4), 4)
+            -- b = sub(3, add(3, 4))
+            -- c = sub(add(3, 4), add(1, 2))
+
+            print(a)
+        ".to_string();
+        let name = "two_function".to_string();
+        let bc = Compiler::from_string(&code, &name);
+        run_and_check(&name, bc, "3\t-4\t4\r\n");
+    }
+
+    #[test]
+    fn two_function() {
+        let code = "\
+            add = function(a, b)
+                return a + b
+            end
+
+            sub = function(a, b)
+                return a - b
+            end
+            a, b = add(3, 4), sub(3, 4)
+            print(a, b)
+        ".to_string();
+        let name = "two_function".to_string();
+        let bc = Compiler::from_string(&code, &name);
+        run_and_check(&name, bc, "7\t-1\r\n");
     }
     // FIXME: Parser do not report error for
     // function(a, b)
